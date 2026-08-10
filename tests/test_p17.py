@@ -116,6 +116,56 @@ class TestTranslate(unittest.TestCase):
 
     @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
     @mock.patch("openai.OpenAI")
+    def test_silent_input_no_prompts(self, mock_openai_cls):
+        """Read+output must not generate extra printf prompts (regression for fidelity bug)."""
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        # Simulate a correct translation: scanf reads silently, only the
+        # explicitly-requested printf appears — no "请输入…" noise.
+        mock_client.chat.completions.create.return_value = mock.MagicMock(
+            choices=[
+                mock.MagicMock(
+                    message=mock.MagicMock(
+                        content=(
+                            '#include <stdio.h>\n\n'
+                            'int main(void) {\n'
+                            '    int n;\n'
+                            '    scanf("%d", &n);\n'
+                            '    printf("%d\\n", n);\n'
+                            '    return 0;\n'
+                            '}\n'
+                        )
+                    )
+                )
+            ]
+        )
+
+        import p17
+        c_source = p17.translate("int n\n读入n\n输出(n)")
+
+        # Must have the explicit output
+        self.assertIn('printf("%d', c_source)
+        # Must have scanf for the read
+        self.assertIn("scanf", c_source)
+        # Must NOT inject convenience prompts
+        self.assertNotIn("请输入", c_source)
+        self.assertNotIn("Please enter", c_source)
+        self.assertNotIn("enter a number", c_source.lower())
+        self.assertNotIn("prompt", c_source.lower())
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
+    def test_system_prompt_has_silent_input_invariant(self, mock_openai_cls):
+        """SYSTEM_PROMPT must include the silent-input rule so models see it."""
+        import p17
+        prompt = p17.SYSTEM_PROMPT
+
+        self.assertIn("silent by default", prompt)
+        self.assertIn("MUST NOT generate prompts", prompt)
+        self.assertIn("Do NOT add user-facing messages", prompt)
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
     def test_ambiguity_response(self, mock_openai_cls):
         """translate() returns the AMBIGUITY string as-is; main() handles exit."""
         mock_client = mock.MagicMock()

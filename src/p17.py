@@ -41,6 +41,14 @@ Translation rules:
    AMBIGUITY: <short description>
    Do NOT guess. Do NOT generate C code when ambiguous.
 
+I/O invariants (CRITICAL — violating these causes Wrong Answer on judges):
+7. Input operations are silent by default. Reading/input instructions (scanf, 读入, input, etc.)
+   MUST NOT generate prompts, labels, explanations, debug messages, or any other stdout output
+   unless the user explicitly requested that output in the .p17 source.
+8. Only explicitly requested output operations (printf, 输出, print, etc.) may produce stdout.
+9. Do NOT add user-facing messages for convenience. No "Please enter...", no "请输入...", no prompts.
+   The user's .p17 source is the complete specification of what stdout should contain.
+
 Chinese keywords you must recognise:
   输入 / input   → scanf
   输出 / 打印     → printf

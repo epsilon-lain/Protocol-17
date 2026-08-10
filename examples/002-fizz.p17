@@ -1,0 +1,16 @@
+int main(){
+    读入一个数n(int);
+    define two array s and cnt length 101;
+    define max=-1;
+    for i in 1..n{
+        读入一个数字p；
+        s[i]=p;
+        cnt[s[i]]++;
+        if(max<cnt[s[i]]){
+            max=cnt[s[i]];
+        }
+    }
+    输出(n-max)；
+    over
+}
+
