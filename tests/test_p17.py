@@ -166,6 +166,18 @@ class TestTranslate(unittest.TestCase):
 
     @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
     @mock.patch("openai.OpenAI")
+    def test_system_prompt_has_operation_preservation_invariant(self, mock_openai_cls):
+        """SYSTEM_PROMPT must include operation-preservation and dependency-order rules."""
+        import p17
+        prompt = p17.SYSTEM_PROMPT
+
+        self.assertIn("Every explicit user operation must be preserved", prompt)
+        self.assertIn("MUST NOT be silently omitted", prompt)
+        self.assertIn("Preserve dependency order", prompt)
+        self.assertIn("uninitialized", prompt.lower())
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
     def test_ambiguity_response(self, mock_openai_cls):
         """translate() returns the AMBIGUITY string as-is; main() handles exit."""
         mock_client = mock.MagicMock()
@@ -229,6 +241,163 @@ class TestTranslate(unittest.TestCase):
 
         # .strip() removes trailing whitespace
         self.assertEqual(c_source, clean_c)
+
+
+# ---------------------------------------------------------------------------
+# Reverse-mode tests
+# ---------------------------------------------------------------------------
+
+class TestReversePrompt(unittest.TestCase):
+    """Test that REVERSE_SYSTEM_PROMPT exists and contains required invariants."""
+
+    def test_reverse_prompt_exists(self):
+        """REVERSE_SYSTEM_PROMPT must be a non-empty string."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+        self.assertIsInstance(prompt, str)
+        self.assertGreater(len(prompt), 100)
+
+    def test_reverse_prompt_includes_fixed_semantics(self):
+        """Reverse prompt must contain the fixed-semantics / no-bug-fixing invariant."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("fixed semantics", prompt.lower())
+        self.assertIn("Free representation", prompt)
+
+    def test_reverse_prompt_includes_actual_behaviour_invariant(self):
+        """Reverse prompt must require describing actual behaviour, not intent."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("actual program behaviour", prompt.lower())
+        self.assertIn("not intended behaviour", prompt.lower())
+
+    def test_reverse_prompt_forbids_bug_fixing(self):
+        """Reverse prompt must forbid silently fixing bugs or suspicious logic."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("Do not silently fix bugs", prompt)
+        self.assertIn("repair bugs", prompt.lower())
+
+    def test_reverse_prompt_forbids_inventing_assumptions(self):
+        """Reverse prompt must forbid inventing assumptions or inferring intent."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("invent assumptions", prompt.lower())
+        self.assertIn("Do not infer unstated programmer intent", prompt)
+
+    def test_reverse_prompt_preserves_constants_and_state(self):
+        """Reverse prompt must require preserving constants, boundaries, state updates."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("constants", prompt.lower())
+        self.assertIn("state updates", prompt.lower())
+
+    def test_reverse_prompt_requires_english_prose(self):
+        """Reverse prompt should specify English as the prose language."""
+        import p17
+        prompt = p17.REVERSE_SYSTEM_PROMPT
+
+        self.assertIn("English", prompt)
+
+
+class TestReverseTranslate(unittest.TestCase):
+    """Test p17.reverse_translate() directly with mocked OpenAI client."""
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
+    def test_reverse_translate_returns_text(self, mock_openai_cls):
+        """reverse_translate() returns a non-empty description string."""
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock.MagicMock(
+            choices=[
+                mock.MagicMock(
+                    message=mock.MagicMock(
+                        content="Initialize sum to 0. For i from 0 to n-1, sum ← sum + a[i]."
+                    )
+                )
+            ]
+        )
+
+        import p17
+        result = p17.reverse_translate("int sum = 0;\nfor (int i = 0; i < n; ++i) sum += a[i];")
+
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
+    def test_reverse_mode_uses_reverse_prompt(self, mock_openai_cls):
+        """reverse_translate() must send the REVERSE_SYSTEM_PROMPT, not the forward one."""
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock.MagicMock(
+            choices=[
+                mock.MagicMock(
+                    message=mock.MagicMock(content="Description.")
+                )
+            ]
+        )
+
+        import p17
+        p17.reverse_translate("int main() { return 0; }")
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        messages = call_kwargs["messages"]
+        system_msg = messages[0]["content"]
+
+        self.assertIn("Free representation", system_msg)
+        self.assertIn("fixed semantics", system_msg.lower())
+        # Verify the forward prompt's distinct markers are NOT present
+        self.assertNotIn("Protocol 17 (P17) to C17 translator", system_msg)
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
+    @mock.patch("p17.compile_and_run")
+    def test_reverse_translate_does_not_call_compile(self, mock_compile, mock_openai_cls):
+        """reverse_translate() must not invoke compile_and_run or any compilation."""
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock.MagicMock(
+            choices=[
+                mock.MagicMock(
+                    message=mock.MagicMock(content="A description of the code.")
+                )
+            ]
+        )
+
+        import p17
+        result = p17.reverse_translate("int main() { return 0; }")
+
+        self.assertIsNotNone(result)
+        mock_compile.assert_not_called()
+
+    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
+    @mock.patch("openai.OpenAI")
+    def test_reverse_markdown_fence_stripping(self, mock_openai_cls):
+        """Reverse output wrapped in ``` fences is stripped."""
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = mock.MagicMock(
+            choices=[
+                mock.MagicMock(
+                    message=mock.MagicMock(
+                        content="```\nInitialize sum to 0.\nFor each i, sum ← sum + a[i].\n```"
+                    )
+                )
+            ]
+        )
+
+        import p17
+        result = p17.reverse_translate("int sum = 0; for(...) sum += a[i];")
+
+        self.assertNotIn("```", result)
+        self.assertIn("Initialize sum", result)
 
 
 class TestCompile(unittest.TestCase):

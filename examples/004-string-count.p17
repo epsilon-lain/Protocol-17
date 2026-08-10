@@ -1,0 +1,10 @@
+main：
+    get string s length 100
+    let mut ans=0;
+    int len=length of s;
+    for i in 1..=len
+        if s[i] is x(letter):
+            ans++;
+        else:
+            continue;
+    print(ans)
