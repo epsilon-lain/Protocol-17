@@ -1,0 +1,3 @@
+int a,b
+input(a,b)
+输出(a+b)
