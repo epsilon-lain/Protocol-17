@@ -1,34 +1,16 @@
 # Protocol 17
 
-**Protocol 17** is an AI-constrained protocol layer that sits between human
-program intent and traditional programming languages.
+An experimental AI-constrained programming protocol.
 
-Users express intent through a mix of natural language, math, familiar
-programming symbols, and native code.  Protocol 17 translates this into
-compilable C17.
-
-Currently this is an **exploratory prototype** — the protocol rules are
-discovered by solving small programming problems, not designed up-front.
-
-## Quick start
-
-### 1.  Install dependencies
-
-```bash
-pip install -r requirements.txt
+```
+P17 source  →  AI translation  →  C17 / Python 3 / Rust  →  target verification  →  PASS / FAILED
 ```
 
-### 2.  Set API credentials
+---
 
-Protocol 17 uses any OpenAI-compatible API.
+## Example
 
-```bash
-export P17_API_URL="https://api.openai.com/v1"
-export P17_API_KEY="sk-..."
-export P17_MODEL="gpt-4o"          # optional; defaults to gpt-4o
-```
-
-### 3.  Write a .p17 source file
+**Write** (`examples/001-add.p17`):
 
 ```c
 int a,b
@@ -36,36 +18,365 @@ input(a,b)
 输出(a+b)
 ```
 
-### 4.  Translate, compile & run
+**Get** (C17):
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    int a, b;
+    scanf("%d %d", &a, &b);
+    printf("%d\n", a + b);
+    return 0;
+}
+```
+
+**Or** (Python 3):
+
+```python
+a = int(input())
+b = int(input())
+print(a + b)
+```
+
+**Run:**
 
 ```bash
 python src/p17.py examples/001-add.p17 --input "1 1"
 # → 2
 ```
 
-## Options
+---
+
+## Core idea
+
+Protocol 17 sits between human intent and traditional programming languages.
+You express what you want through a mix of:
+
+- natural language (Chinese / English)
+- mathematical notation: `f(x) = x^(1/2)`
+- familiar programming symbols: `int`, `float`, `{}`, `()`
+- code-like structures: `if (cond) { ... }`, `for (i from 1 to N) { ... }`
+- native target-language snippets
+
+The central ownership rule:
+
+| User writes | AI may fill |
+|---|---|
+| Explicit constraints | Unspecified details |
+
+> **AI can fill the blanks.**
+> **AI cannot take the pen.**
+
+User-specified details are authoritative and must be preserved exactly.
+What the user leaves unspecified is implementation freedom for the AI.
+
+Protocol 17 is **not**:
+
+- merely natural-language-to-code
+- "Chinese C"
+- a claim that LLM generation is reliable
+- a finished programming language
+- a replacement for compilers
+
+---
+
+## Pipeline
+
+```
+                             ┌──────────────────────┐
+ .p17 source ──────────────▶ │   AI translation      │
+                             │ (OpenAI-compatible)   │
+                             └──────────┬───────────┘
+                                        │
+                         ┌──────────────┼──────────────┐
+                         ▼              ▼              ▼
+                       C17          Python 3         Rust
+                         │              │              │
+                         └──────────────┼──────────────┘
+                                        ▼
+                             ┌──────────────────────┐
+                             │  Target verification  │
+                             │  (deterministic)      │
+                             └──────────┬───────────┘
+                                        │
+                              ┌─────────┴─────────┐
+                              ▼                   ▼
+                           PASS               FAILED
+```
+
+### Forward translation
+
+| Source | Targets |
+|---|---|
+| `.p17` | C17 (compile + run), Python 3 (translate + verify), Rust (translate + verify) |
+
+### Reverse translation
+
+Read source code and produce an English + mathematical notation description
+of its behaviour. Core principle: **free representation, fixed semantics**.
+
+---
+
+## Generated ≠ Verified
+
+A model can return code. Protocol 17 does not treat invalid target code as
+verified.
+
+**Real example from development.** A local Qwen 4B model produced this Rust:
+
+```rust
+let mut n: i32 = 0;
+std::io::stdin().read_line(&mut n).unwrap();  // ❌ read_line needs &mut String
+n = n.trim().parse::<i32>().unwrap();          // ❌ .trim() on i32
+```
+
+This is invalid Rust — `read_line` requires `&mut String`, and `.trim()` is
+not defined on `i32`.
+
+The deterministic verification layer catches this using `rustc` and surfaces
+the diagnostics, rather than silently accepting or repairing broken output.
+
+### Target verification (implemented)
+
+```
+Is the target code valid?
+```
+
+| Target | Method |
+|---|---|
+| C17 | `gcc -std=c17 -fsyntax-only` |
+| Python 3 | `compile(..., 'exec')` — no execution |
+| Rust | `rustc --emit=metadata` — full type + borrow checking |
+
+If a toolchain is unavailable, the verifier reports it clearly rather than
+pretending verification passed.
+
+### Fidelity verification (not yet implemented)
+
+```
+Is the target code faithful to the user's constraints?
+```
+
+Target verification checks whether generated code compiles.
+It does **not** check whether the generated program preserves the user's
+explicit constraints.
+
+**Example.** A `.p17` source writes:
+
+```c
+for i in 1..n
+```
+
+If the user intended borrowed Rust range semantics, a model might produce:
+
+```rust
+for i in 1..=n   // changed semantics but compiles fine
+```
+
+Target verification would accept this — the Rust is valid.
+Only a fidelity verifier could detect that the loop bound changed.
+
+**Another example:**
+
+```c
+s[i] = p;
+cnt[s[i]]++;
+```
+
+A model might silently rewrite this as:
+
+```c
+s[i] = p;
+cnt[p]++;       // bypasses the explicit intermediate read
+```
+
+Again, compiles fine. Again, not faithful.
+
+Fidelity verification is a future layer that checks whether generated code
+respects the user's explicit constraints — not just whether it type-checks.
+
+---
+
+## Installation
+
+### Prerequisites
+
+- Python 3.10+
+- gcc (for C17 compile + run)
+- rustc (optional, for Rust target verification)
+
+### 1. Clone and install dependencies
+
+```bash
+git clone <repo-url> && cd protocol-17
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Configure API access
+
+Protocol 17 uses any OpenAI-compatible API (OpenAI, Ollama, local endpoints).
+
+```bash
+cp .p17.env.example .p17.env
+```
+
+Edit `.p17.env` with your credentials:
+
+```bash
+P17_API_URL=http://localhost:11434/v1
+P17_API_KEY=ollama
+P17_MODEL=qwen3:4b-instruct
+```
+
+`.p17.env` is git-ignored by default and should not be committed.
+
+Precedence: `.p17.env` values override shell environment variables, because
+they are explicit for this workspace.
+
+### 3. Quick start
+
+```bash
+# Translate, compile, and run (C17)
+python src/p17.py examples/001-add.p17 --input "1 1"
+
+# Translate only (Python 3)
+python src/p17.py examples/001-add.p17 --target python --translate-only
+
+# Translate only (Rust)
+python src/p17.py examples/001-add.p17 --target rust --translate-only
+
+# Verify already-generated code
+python src/p17.py --verify-file generated.rs --target rust
+
+# Reverse: describe code in English + math
+python src/p17.py examples/reverse/001-sum.c --reverse
+```
+
+### 4. VS Code extension (optional)
+
+```bash
+cd vscode-extension
+npx @vscode/vsce package
+```
+
+Then in VS Code: `Ctrl+Shift+P` → `Extensions: Install from VSIX...` →
+select `protocol-17-0.1.0.vsix`.
+
+Features:
+
+- Syntax highlighting for `.p17` files
+- **Translate** — AI translation to the selected target language
+- **Explain** — reverse-translate code to English + math
+- **Run** — compile and execute (C17 only)
+- **Target selector** — status-bar toggle: C17 / Python 3 / Rust
+- **Target verification** — runs automatically after Translate
+- **Protocol 17 Output Channel** — errors, diagnostics, verification results
+
+The extension never silently saves or mutates your source document.
+
+---
+
+## CLI reference
+
+```
+python src/p17.py [--target {c,python,rust}] [file] [options]
+```
 
 | Flag | Description |
 |---|---|
+| `file` | Path to a `.p17` source file |
+| `--target {c,python,rust}` | Target language (default: `c`) |
 | `--input`, `-i` | Stdin data for the compiled program |
-| `--no-run` | Stop after compilation (do not execute) |
+| `--no-run` | Compile only, do not execute |
+| `--translate-only` | Print generated code, skip compile/run |
+| `--reverse` | Reverse mode: code → English + math |
 | `--build-dir` | Output directory (default: `build/`) |
+| `--verify-file` | Verify already-generated code without calling the model |
+| `--verify-file` + `--target` | Select target for verification |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success / verified |
+| 1 | Translation failure / ambiguity / verification failed |
+| 2 | Verifier or toolchain unavailable |
+
+---
 
 ## Project layout
 
 ```
-src/p17.py          CLI tool
-examples/           .p17 example sources
-build/              generated C and binaries (git-ignored)
-tests/              minimal tests
+src/p17.py              CLI tool — translate, verify, compile, run
+examples/               .p17 example sources (and reverse examples)
+build/                  generated code and binaries (git-ignored)
+tests/                  Python test suite
+vscode-extension/       VS Code extension
+.p17.env.example        environment template (safe to commit)
+.p17.env                your credentials (git-ignored)
 ```
 
-## Current limitations (MVP)
+---
 
-- C17 target only.
-- No parser — translation is entirely AI-driven.
-- Protocol 17 rules are embedded in the AI system prompt, not in a separate
-  specification engine.
-- No multi-file projects.
-- No incremental compilation.
-- No formal grammar or IR.
+## Current invariants
+
+Protocol 17 translation obeys these constraints (enforced via system prompts):
+
+| Invariant | What it means |
+|---|---|
+| **Silent input** | Reading input produces no prompts, labels, or debug output |
+| **Operation preservation** | Every explicit user operation is preserved; no silent omission |
+| **Identifier preservation** | User identifiers are never renamed for style or convention |
+| **Data-flow preservation** | Explicit intermediate reads/writes are not bypassed |
+| **User code is authoritative** | What the user wrote explicitly is not rewritten |
+| **Borrowed syntax semantics** | Borrowed syntax retains its original semantics |
+
+The Rust target additionally requires:
+
+| Rule | What it means |
+|---|---|
+| Type correctness | Generated Rust must satisfy the type system |
+| Valid stdin | `read_line` requires `&mut String`, not `&mut i32` |
+| usize indexing | Array/slice indexing must use `usize`-compatible indices |
+| No unsafe | `unsafe` must not be used to avoid type issues |
+
+---
+
+## Experimental status
+
+Protocol 17 is an **experimental alpha**. Expect rough edges.
+
+**Implemented:**
+
+- Forward translation: P17 → C17 / Python 3 / Rust
+- Reverse translation: code → English + mathematical notation
+- Deterministic target verification (C17, Python 3, Rust)
+- C17 compile + run
+- Python 3 and Rust translate + verify
+- VS Code dual-pane prototype with syntax highlighting
+- Local and cloud OpenAI-compatible model support
+- Source document is never silently rewritten
+
+**Not yet implemented:**
+
+- Formal syntax specification
+- Parser / AST / IR
+- Protocol 17 fidelity verification (target code may compile but not be faithful)
+- Python/Rust execution
+- Multi-file projects
+- Incremental translation
+- Language Server Protocol (LSP)
+- Source maps
+- AI autocomplete
+
+Syntax, behaviour, and protocol rules **may change** between versions without
+notice.
+
+---
+
+## License
+
+MIT

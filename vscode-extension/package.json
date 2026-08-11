@@ -1,0 +1,54 @@
+{
+  "name": "protocol-17",
+  "displayName": "Protocol 17",
+  "description": "Translate Protocol 17 (.p17) hybrid intent programs into code",
+  "version": "0.1.0",
+  "publisher": "protocol-17",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:p17"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "p17",
+        "aliases": ["Protocol 17", "p17"],
+        "extensions": [".p17"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "p17",
+        "scopeName": "source.p17",
+        "path": "./syntaxes/p17.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "protocol-17.translate",
+        "title": "Protocol 17: Translate"
+      },
+      {
+        "command": "protocol-17.selectTarget",
+        "title": "Protocol 17: Select Target Language"
+      },
+      {
+        "command": "protocol-17.explain",
+        "title": "Protocol 17: Explain Code"
+      },
+      {
+        "command": "protocol-17.run",
+        "title": "Protocol 17: Run"
+      }
+    ]
+  }
+}
