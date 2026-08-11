@@ -277,57 +277,36 @@ Output style:
 - Output the description directly. No markdown fences, no preamble, no meta-commentary."""
 
 
-def reverse_translate(source_code: str) -> str:
-    """Send source code to the AI model, return English + math description.
-
-    Raises RuntimeError on API failure.
-    """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        sys.exit(
-            "Missing dependency: openai.  Install with:\n"
-            "  pip install -r requirements.txt"
-        )
-
-    api_url = os.environ.get("P17_API_URL", "")
-    api_key = os.environ.get("P17_API_KEY", "")
-    model = os.environ.get("P17_MODEL", "gpt-4o")
-
-    if not api_url or not api_key:
-        sys.exit(
-            "Environment variables P17_API_URL and P17_API_KEY must be set.\n"
-            "Example:\n"
-            '  export P17_API_URL="https://api.openai.com/v1"\n'
-            '  export P17_API_KEY="sk-..."'
-        )
-
-    client = OpenAI(base_url=api_url, api_key=api_key)
-
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": REVERSE_SYSTEM_PROMPT},
-                {"role": "user", "content": source_code},
-            ],
-            temperature=0.1,
-        )
-    except Exception as exc:
-        sys.exit(f"AI API call failed: {exc}")
-
-    content = response.choices[0].message.content.strip()
-
-    # Strip markdown fences if the model wrapped the output
+def _strip_markdown_fences(content: str) -> str:
+    """Strip ``` fences if the model wrapped its output."""
     if content.startswith("```"):
         lines = content.splitlines()
-        if lines[-1].strip() == "```":
+        if len(lines) >= 2 and lines[-1].strip() == "```":
             lines = lines[1:-1]
         else:
             lines = lines[1:]
         content = "\n".join(lines).strip()
-
     return content
+
+
+def reverse_translate(source_code: str) -> str:
+    """Send source code to the AI model, return English + math description.
+
+    Raises SystemExit on provider or API failure.
+    """
+    from providers import get_provider
+
+    model = os.environ.get("P17_MODEL", "gpt-4o")
+
+    try:
+        provider = get_provider()
+        content = provider.chat_completion(
+            REVERSE_SYSTEM_PROMPT, source_code, model
+        )
+    except RuntimeError as exc:
+        sys.exit(str(exc))
+
+    return _strip_markdown_fences(content)
 
 
 def translate(p17_source: str, target: str = "c") -> str:
@@ -336,57 +315,26 @@ def translate(p17_source: str, target: str = "c") -> str:
     target is one of: c, python, rust.  Defaults to c (C17) for backward
     compatibility.
 
-    Raises RuntimeError on ambiguity or API failure.
+    Raises SystemExit on provider or API failure.
     """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        sys.exit(
-            "Missing dependency: openai.  Install with:\n"
-            "  pip install -r requirements.txt"
-        )
+    from providers import get_provider
 
-    api_url = os.environ.get("P17_API_URL", "")
-    api_key = os.environ.get("P17_API_KEY", "")
     model = os.environ.get("P17_MODEL", "gpt-4o")
-
-    if not api_url or not api_key:
-        sys.exit(
-            "Environment variables P17_API_URL and P17_API_KEY must be set.\n"
-            "Example:\n"
-            '  export P17_API_URL="https://api.openai.com/v1"\n'
-            '  export P17_API_KEY="sk-..."'
-        )
-
     system_prompt = _get_system_prompt(target)
 
-    client = OpenAI(base_url=api_url, api_key=api_key)
-
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": p17_source},
-            ],
-            temperature=0.1,
-        )
-    except Exception as exc:
-        sys.exit(f"AI API call failed: {exc}")
+        provider = get_provider()
+        content = provider.chat_completion(system_prompt, p17_source, model)
+    except RuntimeError as exc:
+        sys.exit(str(exc))
 
-    content = response.choices[0].message.content.strip()
+    return _strip_markdown_fences(content)
 
-    # Strip markdown code fences if the model ignored our instruction
-    if content.startswith("```"):
-        lines = content.splitlines()
-        # Remove opening fence (```c or ```) and closing fence (```)
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
-        else:
-            lines = lines[1:]
-        content = "\n".join(lines).strip()
 
-    return content
+# Backward-compatible alias
+def translate_to_c(p17_source: str) -> str:
+    """Legacy entry point — translate to C17.  Kept for compatibility."""
+    return translate(p17_source, target="c")
 
 
 # ---------------------------------------------------------------------------

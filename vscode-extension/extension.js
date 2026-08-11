@@ -153,16 +153,21 @@ function runEngine(args, input) {
             }
         }
 
-        // Verify API credentials are available after merging
-        if (!env.P17_API_URL || !env.P17_API_KEY) {
+        // Verify API credentials are available after merging.
+        // P17_API_KEY is required by every provider.
+        // Provider-specific validation (e.g. P17_API_URL for openai-compatible)
+        // is handled by the engine itself.
+        if (!env.P17_API_KEY) {
             const msg = [
-                'Environment variables P17_API_URL and P17_API_KEY must be set.',
+                'Environment variable P17_API_KEY must be set.',
                 '',
                 'To fix this:',
                 '  1. Copy .p17.env.example to .p17.env in your workspace root',
                 '  2. Edit .p17.env with your API credentials',
+                '  3. Set P17_PROVIDER if using a non-OpenAI-compatible provider',
                 '',
-                'Or set P17_API_URL and P17_API_KEY in your shell environment.',
+                'Supported providers: openai-compatible (default), anthropic, gemini.',
+                'Or set P17_API_KEY in your shell environment.',
             ].join('\n');
             if (outputChannel) {
                 outputChannel.appendLine(msg);

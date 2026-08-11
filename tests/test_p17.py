@@ -79,32 +79,29 @@ _MOCK_ENV = {
     "P17_API_KEY": "fake-key",
 }
 
+def _make_mock_provider(response_content):
+    """Return a mock provider whose chat_completion returns response_content."""
+    p = mock.MagicMock()
+    p.chat_completion.return_value = response_content
+    return p
+
+
+
 
 class TestTranslate(unittest.TestCase):
     """Test p17.translate() directly with mocked OpenAI client."""
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_successful_translation(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_successful_translation(self, mock_get_provider):
         """translate() returns valid C code from a mocked successful response."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '#include <stdio.h>\n\n'
-                            'int main(void) {\n'
-                            '    int a, b;\n'
-                            '    scanf("%d %d", &a, &b);\n'
-                            '    printf("%d\\n", a + b);\n'
-                            '    return 0;\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
+        mock_get_provider.return_value = _make_mock_provider(
+            '#include <stdio.h>\n\n'
+            'int main(void) {\n'
+            '    int a, b;\n'
+            '    scanf("%d %d", &a, &b);\n'
+            '    printf("%d\\n", a + b);\n'
+            '    return 0;\n'
+            '}\n'
         )
 
         import p17
@@ -114,31 +111,12 @@ class TestTranslate(unittest.TestCase):
         self.assertIn("scanf", c_source)
         self.assertNotIn("AMBIGUITY", c_source)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_silent_input_no_prompts(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_silent_input_no_prompts(self, mock_get_provider):
         """Read+output must not generate extra printf prompts (regression for fidelity bug)."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
         # Simulate a correct translation: scanf reads silently, only the
         # explicitly-requested printf appears — no "请输入…" noise.
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '#include <stdio.h>\n\n'
-                            'int main(void) {\n'
-                            '    int n;\n'
-                            '    scanf("%d", &n);\n'
-                            '    printf("%d\\n", n);\n'
-                            '    return 0;\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""#include <stdio.h>\\n\\nint main(void) {\\n    int n;\\n    scanf("%d", &n);\\n    printf("%d\\\\n", n);\\n    return 0;\\n}\\n""")
 
         import p17
         c_source = p17.translate("int n\n读入n\n输出(n)")
@@ -153,9 +131,8 @@ class TestTranslate(unittest.TestCase):
         self.assertNotIn("enter a number", c_source.lower())
         self.assertNotIn("prompt", c_source.lower())
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_system_prompt_has_silent_input_invariant(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_system_prompt_has_silent_input_invariant(self, mock_get_provider):
         """SYSTEM_PROMPT must include the silent-input rule so models see it."""
         import p17
         prompt = p17.SYSTEM_PROMPT
@@ -164,9 +141,8 @@ class TestTranslate(unittest.TestCase):
         self.assertIn("MUST NOT generate prompts", prompt)
         self.assertIn("Do NOT add user-facing messages", prompt)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_system_prompt_has_operation_preservation_invariant(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_system_prompt_has_operation_preservation_invariant(self, mock_get_provider):
         """SYSTEM_PROMPT must include operation-preservation and dependency-order rules."""
         import p17
         prompt = p17.SYSTEM_PROMPT
@@ -176,45 +152,23 @@ class TestTranslate(unittest.TestCase):
         self.assertIn("Preserve dependency order", prompt)
         self.assertIn("uninitialized", prompt.lower())
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_ambiguity_response(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_ambiguity_response(self, mock_get_provider):
         """translate() returns the AMBIGUITY string as-is; main() handles exit."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="AMBIGUITY: cannot determine signedness"
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""AMBIGUITY: cannot determine signedness""")
 
         import p17
         result = p17.translate("int x\ninput(x)")
         self.assertTrue(result.startswith("AMBIGUITY:"))
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_markdown_fence_stripping(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_markdown_fence_stripping(self, mock_get_provider):
         """AI output wrapped in ```c ... ``` should be stripped."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '```c\n'
-                            '#include <stdio.h>\n'
-                            'int main(void) { printf("hi\\n"); return 0; }\n'
-                            '```'
-                        )
-                    )
-                )
-            ]
+        mock_get_provider.return_value = _make_mock_provider(
+            '```c\n'
+            '#include <stdio.h>\n'
+            'int main(void) { printf("hi\\n"); return 0; }\n'
+            '```'
         )
 
         import p17
@@ -223,18 +177,11 @@ class TestTranslate(unittest.TestCase):
         self.assertNotIn("```", c_source)
         self.assertIn("int main", c_source)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_no_markdown_fence_passthrough(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_no_markdown_fence_passthrough(self, mock_get_provider):
         """Clean output without fences passes through unchanged."""
         clean_c = '#include <stdio.h>\nint main(void) { return 0; }'
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(message=mock.MagicMock(content=clean_c + "\n"))
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider(clean_c)
 
         import p17
         c_source = p17.translate("int main() {}")
@@ -292,84 +239,48 @@ class TestTargetLanguages(unittest.TestCase):
             self.assertIn("AMBIGUITY", prompt)
             self.assertIn("operation must be preserved", prompt.lower())
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_translate_with_python_target(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_translate_with_python_target(self, mock_get_provider):
         """translate() with target='python' uses PYTHON_SYSTEM_PROMPT."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="a = int(input())\nb = int(input())\nprint(a + b)")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""a = int(input())\\nb = int(input())\\nprint(a + b)""")
 
         import p17
         result = p17.translate("int a,b\ninput(a,b)\n输出(a+b)", target="python")
 
         # Verify the system prompt sent was the Python one
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        msg = call_kwargs["messages"][0]["content"]
+        call_args = mock_get_provider.return_value.chat_completion.call_args
+        msg = call_args[0][0]  # first positional arg = system prompt
         self.assertIn("Python 3", msg)
         self.assertIn("a = int(input())", result)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_translate_default_target_is_c(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_translate_default_target_is_c(self, mock_get_provider):
         """translate() without explicit target uses the C (SYSTEM_PROMPT) prompt."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="#include <stdio.h>\nint main(void) { return 0; }")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""#include <stdio.h>\\nint main(void) { return 0; }""")
 
         import p17
         p17.translate("int main() {}")
 
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        msg = call_kwargs["messages"][0]["content"]
+        call_args = mock_get_provider.return_value.chat_completion.call_args
+        msg = call_args[0][0]  # first positional arg = system prompt
         self.assertIn("C17", msg)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_translate_rust_target(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_translate_rust_target(self, mock_get_provider):
         """translate() with target='rust' uses RUST_SYSTEM_PROMPT."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="fn main() {\n    println!(\"hello\");\n}")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""fn main() {\\n    println!(\\""")
 
         import p17
         p17.translate("输出(\"hello\")", target="rust")
 
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        msg = call_kwargs["messages"][0]["content"]
+        call_args = mock_get_provider.return_value.chat_completion.call_args
+        msg = call_args[0][0]  # first positional arg = system prompt
         self.assertIn("Rust", msg)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_translate_only_stdout_is_clean(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_translate_only_stdout_is_clean(self, mock_get_provider):
         """--translate-only stdout must contain only generated code, no progress text."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="def add(a, b):\n    return a + b")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""def add(a, b):\\n    return a + b""")
 
         import p17
         import io
@@ -482,21 +393,10 @@ class TestIdentifierPreservationPrompt(unittest.TestCase):
 class TestIdentifierPreservationTranslate(unittest.TestCase):
     """Mock-based tests: verify translation output preserves user identifiers."""
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_python_builtin_shadowing_max_preserved(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_python_builtin_shadowing_max_preserved(self, mock_get_provider):
         """User identifier 'max' must remain 'max' in Python, not max_count or similar."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="max = -1\nprint(max)"
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""max = -1\\nprint(max)""")
 
         import p17
         result = p17.translate("define max=-1;\n输出(max);", target="python")
@@ -509,29 +409,10 @@ class TestIdentifierPreservationTranslate(unittest.TestCase):
         self.assertNotIn("max_value", result)
         self.assertNotIn("maximum", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_case_sensitive_pair_n_and_N(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_case_sensitive_pair_n_and_N(self, mock_get_provider):
         """Identifiers n and N are distinct; both must be preserved with original case."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '#include <stdio.h>\n\n'
-                            'int main(void) {\n'
-                            '    int n = 5;\n'
-                            '    int N = 10;\n'
-                            '    printf("%d %d\\n", n, N);\n'
-                            '    return 0;\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""#include <stdio.h>\\n\\nint main(void) {\\n    int n = 5;\\n    int N = 10;\\n    printf("%d %d\\\\n", n, N);\\n    return 0;\\n}\\n""")
 
         import p17
         result = p17.translate("int n=5;\nint N=10;\n输出(n,N);", target="c")
@@ -543,21 +424,10 @@ class TestIdentifierPreservationTranslate(unittest.TestCase):
         self.assertNotIn("n = 5;\n    int n = 10;", result)
         self.assertNotIn("N = 5;\n    int N = 10;", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_case_sensitive_Max_and_max(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_case_sensitive_Max_and_max(self, mock_get_provider):
         """Max and max are distinct identifiers; both cases must be preserved."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="Max = -1\nmax = 0\nprint(Max, max)"
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""Max = -1\\nmax = 0\\nprint(Max, max)""")
 
         import p17
         result = p17.translate("define Max=-1;\ndefine max=0;\n输出(Max,max);", target="python")
@@ -565,30 +435,10 @@ class TestIdentifierPreservationTranslate(unittest.TestCase):
         self.assertIn("Max", result)
         self.assertIn("max", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_function_identifier_preserved(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_function_identifier_preserved(self, mock_get_provider):
         """User-defined function name must be preserved exactly."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '#include <stdio.h>\n\n'
-                            'int computeScore(int base) {\n'
-                            '    return base * 2;\n'
-                            '}\n\n'
-                            'int main(void) {\n'
-                            '    printf("%d\\n", computeScore(10));\n'
-                            '    return 0;\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""#include <stdio.h>\\n\\nint computeScore(int base) {\\n    return base * 2;\\n}\\n\\nint main(void) {\\n    printf("%d\\\\n", computeScore(10));\\n    return 0;\\n}\\n""")
 
         import p17
         result = p17.translate(
@@ -600,21 +450,10 @@ class TestIdentifierPreservationTranslate(unittest.TestCase):
         self.assertIn("computeScore", result)
         self.assertNotIn("compute_score", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_list_identifier_not_renamed_in_python(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_list_identifier_not_renamed_in_python(self, mock_get_provider):
         """'list' in Python shadows builtin but must NOT be renamed."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="list = [1, 2, 3]\nprint(list)"
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""list = [1, 2, 3]\\nprint(list)""")
 
         import p17
         result = p17.translate("int list\nlist = [1,2,3];\n输出(list);", target="python")
@@ -669,30 +508,10 @@ class TestDataFlowPreservationPrompt(unittest.TestCase):
 class TestDataFlowPreservationTranslate(unittest.TestCase):
     """Mock-based tests: verify explicit intermediate data flow is preserved."""
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_intermediate_array_read_preserved(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_intermediate_array_read_preserved(self, mock_get_provider):
         """s[i]=p; cnt[s[i]]++ must preserve a read from s[i], not rewrite to cnt[p]++."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            '#include <stdio.h>\n\n'
-                            'int main(void) {\n'
-                            '    int s[101], cnt[101] = {0};\n'
-                            '    int p = 5;\n'
-                            '    s[1] = p;\n'
-                            '    cnt[s[1]]++;\n'
-                            '    return 0;\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""#include <stdio.h>\\n\\nint main(void) {\\n    int s[101], cnt[101] = {0};\\n    int p = 5;\\n    s[1] = p;\\n    cnt[s[1]]++;\\n    return 0;\\n}\\n""")
 
         import p17
         result = p17.translate("int s[101],cnt[101]={0};\nint p=5;\ns[1]=p;\ncnt[s[1]]++;", target="c")
@@ -703,26 +522,10 @@ class TestDataFlowPreservationTranslate(unittest.TestCase):
         self.assertNotIn("cnt[p]++", result)
         self.assertNotIn("cnt[p as usize] += 1", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_explicit_temp_variable_preserved(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_explicit_temp_variable_preserved(self, mock_get_provider):
         """temp = a + b; result = c + temp must preserve the use of temp."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            'def compute(a, b, c):\n'
-                            '    temp = a + b\n'
-                            '    result = c + temp\n'
-                            '    return result\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""def compute(a, b, c):\\n    temp = a + b\\n    result = c + temp\\n    return result\\n""")
 
         import p17
         result = p17.translate("temp = a + b;\nresult = c + temp;", target="python")
@@ -814,29 +617,10 @@ class TestRustFidelityPrompt(unittest.TestCase):
 class TestRustFidelityTranslate(unittest.TestCase):
     """Mock-based tests: verify Rust output follows type-correctness and fidelity rules."""
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_rust_output_no_unsolicited_prompt(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_rust_output_no_unsolicited_prompt(self, mock_get_provider):
         """Rust translation must not contain println! input prompts."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            'use std::io;\n\n'
-                            'fn main() {\n'
-                            '    let mut input = String::new();\n'
-                            '    io::stdin().read_line(&mut input).unwrap();\n'
-                            '    let n: i32 = input.trim().parse().unwrap();\n'
-                            '    println!("{}", n);\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""use std::io;\\n\\nfn main() {\\n    let mut input = String::new();\\n    io::stdin().read_line(&mut input).unwrap();\\n    let n: i32 = input.trim().parse().unwrap();\\n    println!("{}", n);\\n}\\n""")
 
         import p17
         result = p17.translate("读入一个数n(int);\n输出(n);", target="rust")
@@ -847,29 +631,10 @@ class TestRustFidelityTranslate(unittest.TestCase):
         # Must use read_line with String
         self.assertIn("read_line", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_rust_output_no_broken_stdin(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_rust_output_no_broken_stdin(self, mock_get_provider):
         """Rust translation must NOT use read_line(&mut i32) or .trim() on numeric types."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            'use std::io;\n\n'
-                            'fn main() {\n'
-                            '    let mut buf = String::new();\n'
-                            '    io::stdin().read_line(&mut buf).unwrap();\n'
-                            '    let n: i32 = buf.trim().parse().unwrap();\n'
-                            '    println!("{}", n);\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""use std::io;\\n\\nfn main() {\\n    let mut buf = String::new();\\n    io::stdin().read_line(&mut buf).unwrap();\\n    let n: i32 = buf.trim().parse().unwrap();\\n    println!("{}", n);\\n}\\n""")
 
         import p17
         result = p17.translate("读入一个数n(int);\n输出(n);", target="rust")
@@ -879,30 +644,10 @@ class TestRustFidelityTranslate(unittest.TestCase):
         self.assertNotIn("&mut n", result)
         self.assertNotIn("read_line(&mut n)", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_rust_output_uses_usize_indexing(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_rust_output_uses_usize_indexing(self, mock_get_provider):
         """Rust array indexing must use usize-compatible conversion when needed."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            'use std::io;\n\n'
-                            'fn main() {\n'
-                            '    let mut buf = String::new();\n'
-                            '    io::stdin().read_line(&mut buf).unwrap();\n'
-                            '    let i: i32 = buf.trim().parse().unwrap();\n'
-                            '    let arr = [0i32; 10];\n'
-                            '    println!("{}", arr[i as usize]);\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""use std::io;\\n\\nfn main() {\\n    let mut buf = String::new();\\n    io::stdin().read_line(&mut buf).unwrap();\\n    let i: i32 = buf.trim().parse().unwrap();\\n    let arr = [0i32; 10];\\n    println!("{}", arr[i as usize]);\\n}\\n""")
 
         import p17
         result = p17.translate("int i;\n读入i;\nint arr[10];\n输出(arr[i]);", target="rust")
@@ -910,29 +655,10 @@ class TestRustFidelityTranslate(unittest.TestCase):
         # Array indexing must appear with a usize conversion
         self.assertIn("usize", result)
 
-    @mock.patch.dict(os.environ, _ID_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_rust_output_no_unsafe(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_rust_output_no_unsafe(self, mock_get_provider):
         """Rust translation must not use unsafe blocks."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content=(
-                            'use std::io;\n\n'
-                            'fn main() {\n'
-                            '    let mut buf = String::new();\n'
-                            '    io::stdin().read_line(&mut buf).unwrap();\n'
-                            '    let n: i32 = buf.trim().parse().unwrap();\n'
-                            '    println!("{}", n);\n'
-                            '}\n'
-                        )
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""use std::io;\\n\\nfn main() {\\n    let mut buf = String::new();\\n    io::stdin().read_line(&mut buf).unwrap();\\n    let n: i32 = buf.trim().parse().unwrap();\\n    println!("{}", n);\\n}\\n""")
 
         import p17
         result = p17.translate("读入一个数n(int);\n输出(n);", target="rust")
@@ -1006,21 +732,10 @@ class TestReversePrompt(unittest.TestCase):
 class TestReverseTranslate(unittest.TestCase):
     """Test p17.reverse_translate() directly with mocked OpenAI client."""
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_reverse_translate_returns_text(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_reverse_translate_returns_text(self, mock_get_provider):
         """reverse_translate() returns a non-empty description string."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="Initialize sum to 0. For i from 0 to n-1, sum ← sum + a[i]."
-                    )
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""Initialize sum to 0. For i from 0 to n-1, sum ← sum + a[i].""")
 
         import p17
         result = p17.reverse_translate("int sum = 0;\nfor (int i = 0; i < n; ++i) sum += a[i];")
@@ -1028,46 +743,27 @@ class TestReverseTranslate(unittest.TestCase):
         self.assertIsInstance(result, str)
         self.assertGreater(len(result), 0)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_reverse_mode_uses_reverse_prompt(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_reverse_mode_uses_reverse_prompt(self, mock_get_provider):
         """reverse_translate() must send the REVERSE_SYSTEM_PROMPT, not the forward one."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="Description.")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""Description.""")
 
         import p17
         p17.reverse_translate("int main() { return 0; }")
 
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        messages = call_kwargs["messages"]
-        system_msg = messages[0]["content"]
+        call_args = mock_get_provider.return_value.chat_completion.call_args
+        system_msg = call_args[0][0]  # first positional arg = REVERSE_SYSTEM_PROMPT
 
         self.assertIn("Free representation", system_msg)
         self.assertIn("fixed semantics", system_msg.lower())
         # Verify the forward prompt's distinct markers are NOT present
         self.assertNotIn("Protocol 17 (P17) to C17 translator", system_msg)
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
+    @mock.patch("providers.get_provider")
     @mock.patch("p17.compile_and_run")
-    def test_reverse_translate_does_not_call_compile(self, mock_compile, mock_openai_cls):
+    def test_reverse_translate_does_not_call_compile(self, mock_compile, mock_get_provider):
         """reverse_translate() must not invoke compile_and_run or any compilation."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(content="A description of the code.")
-                )
-            ]
-        )
+        mock_get_provider.return_value = _make_mock_provider("""A description of the code.""")
 
         import p17
         result = p17.reverse_translate("int main() { return 0; }")
@@ -1075,20 +771,14 @@ class TestReverseTranslate(unittest.TestCase):
         self.assertIsNotNone(result)
         mock_compile.assert_not_called()
 
-    @mock.patch.dict(os.environ, _MOCK_ENV, clear=True)
-    @mock.patch("openai.OpenAI")
-    def test_reverse_markdown_fence_stripping(self, mock_openai_cls):
+    @mock.patch("providers.get_provider")
+    def test_reverse_markdown_fence_stripping(self, mock_get_provider):
         """Reverse output wrapped in ``` fences is stripped."""
-        mock_client = mock.MagicMock()
-        mock_openai_cls.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock.MagicMock(
-            choices=[
-                mock.MagicMock(
-                    message=mock.MagicMock(
-                        content="```\nInitialize sum to 0.\nFor each i, sum ← sum + a[i].\n```"
-                    )
-                )
-            ]
+        mock_get_provider.return_value = _make_mock_provider(
+            '```\n'
+            'Initialize sum to 0.\n'
+            'For each i, sum ← sum + a[i].\n'
+            '```'
         )
 
         import p17
@@ -1438,6 +1128,257 @@ class TestVerification(unittest.TestCase):
             # stdout must be empty — verification messages go to stderr
             self.assertEqual(result.stdout.strip(), "",
                              f"stdout must be clean. Got: {result.stdout!r}")
+        finally:
+            os.unlink(tmp)
+
+
+# ---------------------------------------------------------------------------
+# Provider tests
+# ---------------------------------------------------------------------------
+
+class TestProviderDispatch(unittest.TestCase):
+    """Test provider selection and dispatch — no external API calls."""
+
+    def setUp(self):
+        # Save original env
+        self._saved = {k: os.environ.get(k) for k in
+                       ("P17_PROVIDER", "P17_API_URL", "P17_API_KEY", "P17_MODEL")}
+
+    def tearDown(self):
+        # Restore env
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _clear_p17_env(self):
+        for k in ("P17_PROVIDER", "P17_API_URL", "P17_API_KEY", "P17_MODEL"):
+            os.environ.pop(k, None)
+
+    def test_default_provider_is_openai_compatible(self):
+        """When P17_PROVIDER is not set, default to openai-compatible."""
+        from providers import get_provider
+        self._clear_p17_env()
+        os.environ["P17_API_URL"] = "https://fake.example/v1"
+        os.environ["P17_API_KEY"] = "fake-key"
+
+        provider = get_provider()
+        from providers.openai_compatible import OpenAICompatibleProvider
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+
+    def test_explicit_openai_compatible_provider(self):
+        """P17_PROVIDER=openai-compatible selects the right provider."""
+        from providers import get_provider
+        self._clear_p17_env()
+        os.environ["P17_PROVIDER"] = "openai-compatible"
+
+        provider = get_provider()
+        from providers.openai_compatible import OpenAICompatibleProvider
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+
+    def test_anthropic_provider_dispatch(self):
+        """P17_PROVIDER=anthropic selects the Anthropic provider."""
+        from providers import get_provider
+        self._clear_p17_env()
+        os.environ["P17_PROVIDER"] = "anthropic"
+
+        provider = get_provider()
+        from providers.anthropic import AnthropicProvider
+        self.assertIsInstance(provider, AnthropicProvider)
+
+    def test_gemini_provider_dispatch(self):
+        """P17_PROVIDER=gemini selects the Gemini provider."""
+        from providers import get_provider
+        self._clear_p17_env()
+        os.environ["P17_PROVIDER"] = "gemini"
+
+        provider = get_provider()
+        from providers.gemini import GeminiProvider
+        self.assertIsInstance(provider, GeminiProvider)
+
+    def test_unknown_provider_exits_cleanly(self):
+        """Unknown P17_PROVIDER must exit with a clear error message."""
+        self._clear_p17_env()
+        os.environ["P17_PROVIDER"] = "nonexistent-provider"
+
+        with self.assertRaises(SystemExit) as ctx:
+            from providers import get_provider
+            get_provider()
+        self.assertIn("nonexistent-provider", str(ctx.exception))
+
+
+class TestProviderSecurity(unittest.TestCase):
+    """Verify that API keys are never leaked in errors or logging."""
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in
+                       ("P17_PROVIDER", "P17_API_URL", "P17_API_KEY", "P17_MODEL")}
+        # Pre-populate optional SDK modules so mock.patch works even
+        # when they are not installed.
+        if "anthropic" not in sys.modules:
+            sys.modules["anthropic"] = mock.MagicMock()
+        if "google" not in sys.modules:
+            sys.modules["google"] = mock.MagicMock()
+        if "google.genai" not in sys.modules:
+            sys.modules["google.genai"] = mock.MagicMock()
+        # Wire google.genai as attribute so import resolution works
+        sys.modules["google"].genai = sys.modules["google.genai"]
+        # The genai module needs types submodule for GenerateContentConfig
+        sys.modules["google.genai"].types = mock.MagicMock()
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _clear_p17_env(self):
+        for k in ("P17_PROVIDER", "P17_API_URL", "P17_API_KEY", "P17_MODEL"):
+            os.environ.pop(k, None)
+
+    @mock.patch("openai.OpenAI")
+    def test_api_key_not_in_openai_error(self, mock_openai_cls):
+        """OpenAI errors must not include the API key."""
+        from providers.openai_compatible import OpenAICompatibleProvider
+
+        os.environ["P17_API_URL"] = "https://fake.example/v1"
+        secret = "sk-secret-key-12345"
+        os.environ["P17_API_KEY"] = secret
+
+        # Simulate an error that includes the key in its message
+        mock_client = mock.MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = Exception(
+            f"Auth error with key {secret}"
+        )
+
+        provider = OpenAICompatibleProvider()
+        with self.assertRaises(RuntimeError) as ctx:
+            provider.chat_completion("system", "user", "model")
+
+        error_msg = str(ctx.exception)
+        self.assertNotIn(secret, error_msg,
+                         f"API key must not appear in error: {error_msg!r}")
+        self.assertIn("<redacted>", error_msg)
+
+    def test_api_key_not_in_anthropic_error(self):
+        """Anthropic errors must not include the API key."""
+        from providers.anthropic import AnthropicProvider
+
+        secret = "sk-ant-secret-key-67890"
+        os.environ["P17_API_KEY"] = secret
+
+        # The mock module was pre-populated in setUp.
+        # Wire its Anthropic class to raise.
+        mock_anthropic_mod = sys.modules["anthropic"]
+        mock_client = mock.MagicMock()
+        mock_anthropic_mod.Anthropic.return_value = mock_client
+        mock_client.messages.create.side_effect = Exception(
+            f"Invalid key: {secret}"
+        )
+
+        provider = AnthropicProvider()
+        with self.assertRaises(RuntimeError) as ctx:
+            provider.chat_completion("system", "user", "model")
+
+        error_msg = str(ctx.exception)
+        self.assertNotIn(secret, error_msg,
+                         f"API key must not appear in error: {error_msg!r}")
+
+    def test_api_key_not_in_gemini_error(self):
+        """Gemini errors must not include the API key."""
+        from providers.gemini import GeminiProvider
+
+        secret = "gemini-secret-key-99999"
+        os.environ["P17_API_KEY"] = secret
+
+        # Wire the mock genai.Client so models.generate_content raises
+        # with the key in the error message.
+        mock_genai = sys.modules["google.genai"]
+        mock_client = mock.MagicMock()
+        mock_genai.Client.return_value = mock_client
+        mock_client.models.generate_content.side_effect = Exception(
+            f"API key not valid: {secret}"
+        )
+
+        provider = GeminiProvider()
+        with self.assertRaises(RuntimeError) as ctx:
+            provider.chat_completion("system", "user", "model")
+
+        error_msg = str(ctx.exception)
+        self.assertNotIn(secret, error_msg,
+                         f"API key must not appear in error: {error_msg!r}")
+
+
+class TestProviderIntegration(unittest.TestCase):
+    """End-to-end provider tests via the translate() path — mocked network."""
+
+    @mock.patch("providers.get_provider")
+    def test_provider_returns_plain_text(self, mock_get_provider):
+        """The provider adapter must return plain generated text, not raw API objects."""
+        mock_get_provider.return_value = _make_mock_provider("plain text output")
+
+        import p17
+        result = p17.translate("int x;\n输出(x);", target="c")
+        self.assertEqual(result, "plain text output")
+
+    @mock.patch("providers.get_provider")
+    def test_legacy_no_provider_env_still_works(self, mock_get_provider):
+        """When P17_PROVIDER is not set, openai-compatible is used (via mock)."""
+        os.environ.pop("P17_PROVIDER", None)
+        mock_get_provider.return_value = _make_mock_provider("#include <stdio.h>\nint main(){return 0;}")
+
+        import p17
+        result = p17.translate("int main(){}", target="c")
+        self.assertIn("int main", result)
+
+    @mock.patch("providers.get_provider")
+    def test_local_ollama_config_works(self, mock_get_provider):
+        """Local Ollama-compatible config (dummy key) must work."""
+        os.environ["P17_PROVIDER"] = "openai-compatible"
+        os.environ["P17_API_URL"] = "http://localhost:11434/v1"
+        os.environ["P17_API_KEY"] = "ollama"
+        os.environ["P17_MODEL"] = "qwen3:4b-instruct"
+
+        mock_get_provider.return_value = _make_mock_provider("fn main() {}")
+
+        import p17
+        result = p17.translate("int main(){}", target="rust")
+        self.assertIn("fn main()", result)
+
+    @mock.patch("providers.get_provider")
+    def test_verifier_never_calls_provider(self, mock_get_provider):
+        """verify_target must never instantiate or call any model provider."""
+        import p17
+
+        with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+            f.write("x = 1\n")
+            tmp = f.name
+        try:
+            passed, diagnostics, tool_available = p17.verify_target(tmp, "python")
+            self.assertTrue(tool_available)
+            self.assertTrue(passed)
+            # get_provider must never have been called
+            mock_get_provider.assert_not_called()
+        finally:
+            os.unlink(tmp)
+
+    def test_verify_file_cli_no_api_keys(self):
+        """--verify-file must work without any P17_* env vars (already tested)."""
+        # Re-verify this still works with the provider architecture
+        with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+            f.write("x = 1\n")
+            tmp = f.name
+        try:
+            result = run_p17(
+                "--verify-file", tmp, "--target", "python",
+                env={"P17_API_URL": "", "P17_API_KEY": "",
+                     "P17_PROVIDER": "", "PATH": os.environ["PATH"]},
+            )
+            self.assertEqual(result.returncode, 0,
+                             f"Verification should pass without any API config. stderr={result.stderr!r}")
         finally:
             os.unlink(tmp)
 

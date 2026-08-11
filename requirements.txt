@@ -1,1 +1,4 @@
 openai>=1.0.0
+# Optional — needed only when using the corresponding P17_PROVIDER:
+# anthropic>=0.40.0
+# google-genai>=1.0.0

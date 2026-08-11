@@ -3,7 +3,7 @@
 An experimental AI-constrained programming protocol.
 
 ```
-P17 source  →  AI translation  →  C17 / Python 3 / Rust  →  target verification  →  PASS / FAILED
+P17 source  →  provider adapter  →  user-selected model  →  C17 / Python 3 / Rust  →  target verification  →  PASS / FAILED
 ```
 
 ---
@@ -85,8 +85,9 @@ Protocol 17 is **not**:
 
 ```
                              ┌──────────────────────┐
- .p17 source ──────────────▶ │   AI translation      │
-                             │ (OpenAI-compatible)   │
+ .p17 source ──────────────▶ │   provider adapter    │
+                             │ (openai-compatible /  │
+                             │  anthropic / gemini)  │
                              └──────────┬───────────┘
                                         │
                          ┌──────────────┼──────────────┐
@@ -198,6 +199,29 @@ respects the user's explicit constraints — not just whether it type-checks.
 
 ---
 
+---
+
+## Bring Your Own Model
+
+Protocol 17 is not tied to any specific model, provider, or vendor.
+You choose your provider, model, API endpoint, and credentials.
+
+The provider adapter translates between Protocol 17's internal interface and
+the provider-specific API. Provider formats never leak into fidelity rules,
+verification, or compiler logic.
+
+| Adapter | `P17_PROVIDER` | SDK |
+|---|---|---|
+| OpenAI-compatible | `openai-compatible` (default) | `openai` |
+| Anthropic (Claude) | `anthropic` | `anthropic` |
+| Google Gemini | `gemini` | `google-genai` |
+
+The `openai-compatible` adapter works with OpenAI, Ollama, LM Studio,
+DeepSeek, OpenRouter, and any endpoint that speaks the OpenAI chat
+completions API.
+
+---
+
 ## Installation
 
 ### Prerequisites
@@ -215,23 +239,46 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure API access
+### 2. Configure a provider
 
-Protocol 17 uses any OpenAI-compatible API (OpenAI, Ollama, local endpoints).
+Protocol 17 is provider-agnostic — you bring your own model and credentials.
 
 ```bash
 cp .p17.env.example .p17.env
 ```
 
-Edit `.p17.env` with your credentials:
+**Supported providers:**
+
+| Provider | Config |
+|---|---|
+| `openai-compatible` (default) | `P17_API_URL` + `P17_API_KEY` + `P17_MODEL` |
+| `anthropic` | `P17_API_KEY` + `P17_MODEL` |
+| `gemini` | `P17_API_KEY` + `P17_MODEL` |
+
+The `openai-compatible` provider works with any OpenAI-compatible endpoint:
+OpenAI, Ollama, LM Studio, DeepSeek, OpenRouter, local servers.
+
+**Example — local Ollama:**
 
 ```bash
+P17_PROVIDER=openai-compatible
 P17_API_URL=http://localhost:11434/v1
 P17_API_KEY=ollama
 P17_MODEL=qwen3:4b-instruct
 ```
 
-`.p17.env` is git-ignored by default and should not be committed.
+**Example — Anthropic:**
+
+```bash
+P17_PROVIDER=anthropic
+P17_API_KEY=sk-ant-...
+P17_MODEL=claude-sonnet-5-20251001
+```
+
+`P17_PROVIDER` defaults to `openai-compatible` when not set, for backward
+compatibility.
+
+`.p17.env` is git-ignored — it will never be committed.
 
 Precedence: `.p17.env` values override shell environment variables, because
 they are explicit for this workspace.
