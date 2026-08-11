@@ -199,8 +199,6 @@ respects the user's explicit constraints — not just whether it type-checks.
 
 ---
 
----
-
 ## Bring Your Own Model
 
 Protocol 17 is not tied to any specific model, provider, or vendor.
@@ -233,7 +231,7 @@ completions API.
 ### 1. Clone and install dependencies
 
 ```bash
-git clone <repo-url> && cd protocol-17
+git clone https://github.com/epsilon-lain/Protocol-17.git && cd Protocol-17
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -278,7 +276,7 @@ P17_MODEL=claude-sonnet-5-20251001
 `P17_PROVIDER` defaults to `openai-compatible` when not set, for backward
 compatibility.
 
-`.p17.env` is git-ignored — it will never be committed.
+`.p17.env` is git-ignored by default and should not be committed.
 
 Precedence: `.p17.env` values override shell environment variables, because
 they are explicit for this workspace.
