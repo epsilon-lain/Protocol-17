@@ -21,12 +21,19 @@ P17_PY = str(PROJECT_ROOT / "src" / "p17.py")
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
-def run_p17(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    """Run p17.py as a subprocess with given CLI args."""
-    full_env = {**os.environ, **(env or {})}
+def run_p17(*args: str, env: dict | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
+    """Run p17.py as a subprocess with given CLI args.
+
+    When env is provided it is the COMPLETE child environment — nothing is
+    merged in from os.environ — so tests can remove P17_* variables to
+    exercise .p17.env fallback loading.  (Merging cannot delete keys.)
+    cwd optionally points at a project directory whose .p17.env should be
+    discovered by the CLI.
+    """
+    full_env = env if env is not None else dict(os.environ)
     return subprocess.run(
         [sys.executable, P17_PY, *args],
-        capture_output=True, text=True, env=full_env,
+        capture_output=True, text=True, env=full_env, cwd=cwd,
     )
 
 
@@ -1381,6 +1388,198 @@ class TestProviderIntegration(unittest.TestCase):
                              f"Verification should pass without any API config. stderr={result.stderr!r}")
         finally:
             os.unlink(tmp)
+
+
+# ---------------------------------------------------------------------------
+# .p17.env tests — parsing, precedence, and CLI auto-loading
+# ---------------------------------------------------------------------------
+
+class TestEnvFileParsing(unittest.TestCase):
+    """.p17.env parsing — minimal grammar, no shell evaluation."""
+
+    def test_parse_basic_key_value(self):
+        import p17
+        result = p17.parse_env_file(
+            "P17_API_URL=https://example.com/v1\nP17_API_KEY=sk-abc123\n"
+        )
+        self.assertEqual(result["P17_API_URL"], "https://example.com/v1")
+        self.assertEqual(result["P17_API_KEY"], "sk-abc123")
+
+    def test_parse_comments_and_blank_lines(self):
+        import p17
+        result = p17.parse_env_file(
+            "# comment\n"
+            "\n"
+            "   # indented comment\n"
+            "P17_MODEL=qwen3:4b-instruct\n"
+            "\n"
+        )
+        self.assertEqual(result, {"P17_MODEL": "qwen3:4b-instruct"})
+
+    def test_parse_double_quoted_values(self):
+        import p17
+        result = p17.parse_env_file(
+            'P17_API_URL="https://example.com/v1"\nP17_API_KEY="sk-abc"\n'
+        )
+        self.assertEqual(result["P17_API_URL"], "https://example.com/v1")
+        self.assertEqual(result["P17_API_KEY"], "sk-abc")
+
+    def test_parse_single_quoted_values(self):
+        import p17
+        result = p17.parse_env_file(
+            "P17_API_URL='https://example.com/v1'\nP17_API_KEY='sk-abc'\n"
+        )
+        self.assertEqual(result["P17_API_URL"], "https://example.com/v1")
+        self.assertEqual(result["P17_API_KEY"], "sk-abc")
+
+    def test_parse_value_containing_equals(self):
+        import p17
+        result = p17.parse_env_file("P17_API_URL=https://example.com/v1?x=1&y=2\n")
+        self.assertEqual(result["P17_API_URL"], "https://example.com/v1?x=1&y=2")
+
+    def test_parse_no_shell_evaluation(self):
+        """$VAR, backticks and $(...) must remain literal — never executed."""
+        import p17
+        result = p17.parse_env_file(
+            "SAFE=$HOME\nBACKTICK=`whoami`\nSUBSHELL=$(whoami)\n"
+        )
+        self.assertEqual(result["SAFE"], "$HOME")
+        self.assertEqual(result["BACKTICK"], "`whoami`")
+        self.assertEqual(result["SUBSHELL"], "$(whoami)")
+
+    def test_parse_lines_without_equals_ignored(self):
+        import p17
+        result = p17.parse_env_file("just some text\nANOTHER_LINE\nexport FOO=bar\n")
+        # 'export FOO=bar' parses literally as key 'export FOO' — minimal
+        # parser, no shell keywords.  Never executed either way.
+        self.assertEqual(result, {"export FOO": "bar"})
+
+    def test_parse_empty_file(self):
+        import p17
+        self.assertEqual(p17.parse_env_file(""), {})
+
+    def test_load_env_file_only_sets_missing_keys(self):
+        """Shell environment variables must take precedence over .p17.env."""
+        import p17
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".p17.env"
+            env_path.write_text(
+                "P17_API_URL=https://file.example/v1\n"
+                "P17_API_KEY=file-key\n"
+                "P17_MODEL=file-model\n"
+            )
+
+            with mock.patch.dict(os.environ, {"P17_API_URL": "https://shell.example/v1"}):
+                os.environ.pop("P17_API_KEY", None)
+                os.environ.pop("P17_MODEL", None)
+
+                p17.load_env_file(env_path)
+
+                # Existing shell value wins...
+                self.assertEqual(os.environ["P17_API_URL"], "https://shell.example/v1")
+                # ...while keys missing from the environment fall back to the file.
+                self.assertEqual(os.environ["P17_API_KEY"], "file-key")
+                self.assertEqual(os.environ["P17_MODEL"], "file-model")
+
+    def test_load_env_file_never_prints_key(self):
+        """load_env_file must write nothing to stdout/stderr."""
+        import io
+        import contextlib
+        import p17
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".p17.env"
+            env_path.write_text("P17_API_KEY=super-secret-key\n")
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                 contextlib.redirect_stdout(stdout), \
+                 contextlib.redirect_stderr(stderr):
+                p17.load_env_file(env_path)
+
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+
+
+class TestCLIDotEnvLoading(unittest.TestCase):
+    """The CLI loads .p17.env automatically — no `source .p17.env` needed."""
+
+    @staticmethod
+    def _clean_env():
+        """Environment without any P17_* variables (PATH kept)."""
+        return {k: v for k, v in os.environ.items() if not k.startswith("P17_")}
+
+    def test_cli_loads_dotenv_from_project_directory(self):
+        """--test-provider must read provider config from .p17.env in cwd."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, ".p17.env").write_text(
+                "P17_PROVIDER=provider-from-env-file\n"
+            )
+            result = run_p17(
+                "--test-provider", env=self._clean_env(), cwd=tmpdir,
+            )
+            # The provider name from the file is visible in the error,
+            # proving the CLI loaded .p17.env on its own.
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("provider-from-env-file", result.stdout + result.stderr)
+            self.assertIn("Unknown P17_PROVIDER", result.stdout + result.stderr)
+
+    def test_cli_finds_dotenv_in_parent_directory(self):
+        """Running from a subdirectory still finds the workspace .p17.env."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, ".p17.env").write_text(
+                "P17_PROVIDER=parent-dir-provider\n"
+            )
+            sub_dir = Path(tmpdir, "nested", "deeper")
+            sub_dir.mkdir(parents=True)
+            result = run_p17(
+                "--test-provider", env=self._clean_env(), cwd=str(sub_dir),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("parent-dir-provider", result.stdout + result.stderr)
+
+    def test_shell_env_overrides_dotenv(self):
+        """Shell P17_* variables take precedence over .p17.env values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # The file names a bogus provider.  If it were loaded over the
+            # shell, get_provider() would exit with "Unknown P17_PROVIDER".
+            Path(tmpdir, ".p17.env").write_text(
+                "P17_PROVIDER=bogus-from-file\n"
+            )
+            env = self._clean_env()
+            env["P17_PROVIDER"] = "openai-compatible"
+            result = run_p17(
+                "--test-provider", env=env, cwd=tmpdir,
+            )
+            output = result.stdout + result.stderr
+            # Shell provider won: no "Unknown P17_PROVIDER" error, and the
+            # file's provider name is never mentioned.  The run still fails
+            # (no API URL / no server), but through the selected provider.
+            self.assertNotIn("Unknown P17_PROVIDER", output)
+            self.assertNotIn("bogus-from-file", output)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_verify_only_ignores_dotenv_provider_config(self):
+        """--verify-file works even when .p17.env names a bogus provider —
+        verification never initializes a provider, and the file's API key is
+        never printed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, ".p17.env").write_text(
+                "P17_PROVIDER=bogus-provider\n"
+                "P17_API_KEY=never-printed-key\n"
+            )
+            source = Path(tmpdir, "ok.py")
+            source.write_text("x = 1\n")
+
+            result = run_p17(
+                "--verify-file", str(source), "--target", "python",
+                env=self._clean_env(), cwd=tmpdir,
+            )
+            self.assertEqual(result.returncode, 0,
+                             f"verify-only must work without provider config. stderr={result.stderr!r}")
+            self.assertNotIn("bogus-provider", result.stdout + result.stderr)
+            self.assertNotIn("never-printed-key", result.stdout + result.stderr)
 
 
 # Integration test — requires real API credentials

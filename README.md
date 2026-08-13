@@ -318,9 +318,67 @@ Features:
 - **Run** — compile and execute (C17 only)
 - **Target selector** — status-bar toggle: C17 / Python 3 / Rust
 - **Target verification** — runs automatically after Translate
+- **Configure Model** — guided setup via Command Palette (no manual `.p17.env` editing)
+- **Test Model Connection** — verify provider/model responds before translating
 - **Protocol 17 Output Channel** — errors, diagnostics, verification results
 
 The extension never silently saves or mutates your source document.
+
+#### VS Code Model Configuration
+
+Run **Protocol 17: Configure Model** from the Command Palette
+(`Ctrl+Shift+P`). The command guides you through:
+
+1. **Provider** — select OpenAI-compatible, Anthropic, or Gemini
+2. **Model** — enter the model name/ID
+3. **API URL** — (OpenAI-compatible only) the API base URL
+4. **API Key** — password-masked input, stored securely
+
+**API keys are stored with VS Code SecretStorage** — they are never
+written to `settings.json`, never written to `.p17.env`, never logged to
+the Output Channel, and never included in error messages.
+
+SecretStorage itself is global to the extension (not per-workspace), so
+Protocol 17 explicitly namespaces secrets per workspace using a stable
+hash derived from the workspace URI. A key configured in one workspace
+will never accidentally override `.p17.env` in another workspace.
+
+After configuration, a status bar item shows your current model
+(`P17: qwen3:4b-instruct`). Click it to reconfigure.
+
+Optionally run **Protocol 17: Test Model Connection** to verify the
+configured provider and model can respond before translating.
+
+#### Configuration precedence
+
+| Priority | Source | What |
+|---|---|---|
+| 1 (highest) | SecretStorage | `P17_API_KEY` (when configured via VS Code) |
+| 2 | VS Code workspace state | `P17_PROVIDER`, `P17_MODEL`, `P17_API_URL` |
+| 3 | `.p17.env` | All `P17_*` variables |
+| 4 (lowest) | Extension Host `process.env` | Shell environment |
+
+VS Code configured values override `.p17.env` values for the same keys.
+The SecretStorage API key overrides `P17_API_KEY` from `.p17.env` only
+when you have explicitly configured a key through the extension UI.
+
+If no VS Code configuration exists, `.p17.env` behaviour is unchanged.
+
+#### `.p17.env` backward compatibility
+
+`.p17.env` is still fully supported for CLI usage and for users who
+prefer file-based configuration. If you already have a working
+`.p17.env`, the extension will use those values unless you explicitly
+override them through **Configure Model**.
+
+Example existing setup continues to work:
+
+```bash
+P17_PROVIDER=openai-compatible
+P17_API_URL=http://localhost:11434/v1
+P17_API_KEY=ollama
+P17_MODEL=qwen3:4b-instruct
+```
 
 ---
 

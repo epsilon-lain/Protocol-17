@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "protocol-17",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epsilon-lain/Protocol-17.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -35,7 +39,8 @@
     "commands": [
       {
         "command": "protocol-17.translate",
-        "title": "Protocol 17: Translate"
+        "title": "Protocol 17: Translate",
+        "icon": "$(play)"
       },
       {
         "command": "protocol-17.selectTarget",
@@ -48,7 +53,36 @@
       {
         "command": "protocol-17.run",
         "title": "Protocol 17: Run"
+      },
+      {
+        "command": "protocol-17.configureModel",
+        "title": "Protocol 17: Configure Model"
+      },
+      {
+        "command": "protocol-17.testConnection",
+        "title": "Protocol 17: Test Model Connection"
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "protocol-17.translate",
+          "when": "resourceLangId == p17",
+          "group": "navigation",
+          "icon": "$(play)"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Protocol 17",
+      "properties": {
+        "protocol17.translationTimeout": {
+          "type": "number",
+          "default": 180,
+          "minimum": 0,
+          "description": "Timeout in seconds for AI translation calls. 0 disables the timeout (wait indefinitely)."
+        }
+      }
+    }
   }
 }

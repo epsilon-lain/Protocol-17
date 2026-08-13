@@ -13,6 +13,10 @@ Usage:
     python src/p17.py examples/001-add.p17 --no-run
     python src/p17.py examples/reverse/001-sum.c --reverse
     python src/p17.py examples/001-add.p17 --target python --translate-only
+
+A workspace .p17.env file is loaded automatically as fallback configuration
+(no `source .p17.env` needed).  Real shell environment variables always take
+precedence over values from the file.
 """
 
 import argparse
@@ -22,6 +26,63 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Workspace .p17.env — fallback configuration (never overrides the shell)
+# ---------------------------------------------------------------------------
+
+def parse_env_file(content: str) -> dict[str, str]:
+    """Parse .p17.env contents with a minimal KEY=VALUE grammar.
+
+    Supports blank lines, full-line `#` comments, and optional matching
+    single/double quotes around values.  There is NO shell evaluation:
+    `$VAR`, backticks, and `$(...)` stay literal, and file contents are
+    never executed.
+    """
+    result: dict[str, str] = {}
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or not key.strip():
+            continue
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        result[key] = value
+    return result
+
+
+def find_env_file() -> Path | None:
+    """Locate .p17.env in the project/workspace context.
+
+    Search starts at the current directory and walks up through its parent
+    directories, so running the CLI from a subdirectory still finds the
+    workspace configuration.  Returns None when no .p17.env exists.
+    """
+    directory = Path.cwd()
+    for parent in [directory, *directory.parents]:
+        candidate = parent / ".p17.env"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_env_file(env_path: Path) -> None:
+    """Load .p17.env into os.environ as fallback configuration only.
+
+    Existing environment variables (shell / parent process) always take
+    precedence, so values are only set when the key is not already present.
+    Nothing is printed — P17_API_KEY values are never echoed.
+    """
+    try:
+        content = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for key, value in parse_env_file(content).items():
+        os.environ.setdefault(key, value)
 
 # ---------------------------------------------------------------------------
 # AI translation
@@ -510,7 +571,20 @@ def main() -> None:
         "--verify-file", default=None,
         help="Verify an already-generated target file without translation (use with --target)",
     )
+    parser.add_argument(
+        "--test-provider", action="store_true",
+        help="Test the configured provider can respond to a minimal request. "
+             "Exits 0 on success, 1 on failure. Never prints credentials.",
+    )
     args = parser.parse_args()
+
+    # Load the workspace .p17.env (if any) as fallback configuration BEFORE
+    # any provider initialization.  Real environment variables take
+    # precedence, so this never overrides the shell.  Verification-only mode
+    # below never touches provider configuration either way.
+    env_file = find_env_file()
+    if env_file is not None:
+        load_env_file(env_file)
 
     # ------------------------------------------------------------------
     # Verification-only mode — no API key, no model, no translation
@@ -542,10 +616,36 @@ def main() -> None:
             )
             sys.exit(1)
 
-    # Require a source file when not in verify-only mode
+    # ------------------------------------------------------------------
+    # Provider connection test — minimal, never prints credentials
+    # ------------------------------------------------------------------
+    if args.test_provider:
+        from providers import get_provider
+
+        provider_name = os.environ.get("P17_PROVIDER", "openai-compatible")
+        model = os.environ.get("P17_MODEL", "gpt-4o")
+
+        try:
+            provider = get_provider()
+            provider.chat_completion(
+                "Reply with exactly: P17_OK",
+                "Reply with exactly: P17_OK",
+                model,
+            )
+        except Exception as exc:
+            # Never include credentials in error output
+            msg = str(exc)
+            print(f"Connection failed: {msg}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"P17_OK ({provider_name} / {model})", file=sys.stderr)
+        sys.exit(0)
+
+    # Require a source file when not in verify-only or test mode
     if args.file is None:
         print(
-            "Error: a .p17 source file is required (or use --verify-file for verification-only mode).",
+            "Error: a .p17 source file is required "
+            "(or use --verify-file / --test-provider).",
             file=sys.stderr,
         )
         sys.exit(2)
