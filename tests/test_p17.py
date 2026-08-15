@@ -1140,6 +1140,275 @@ class TestVerification(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Fidelity verification tests — deterministic, no AI involved
+# ---------------------------------------------------------------------------
+
+class TestFidelityVerification(unittest.TestCase):
+    """Test the deterministic fidelity verification layer — no AI involved."""
+
+    _SOURCE = "for i in 1..n"
+
+    def test_exclusive_range_preserved_passes(self):
+        """Generated code keeping `1..n` exclusive must pass fidelity."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE,
+            "for i in 1..n { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertTrue(passed, f"diag={diagnostics!r}")
+        self.assertEqual(diagnostics, "")
+
+    def test_inclusive_upper_bound_fails(self):
+        """`1..n` becoming `1..=n` changes upper-bound semantics: FAILED."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE,
+            "for i in 1..=n { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("1..=n", diagnostics)
+        self.assertIn("inclusive", diagnostics)
+
+    def test_changed_lower_bound_fails(self):
+        """`1..n` becoming `0..n` changes the lower bound: FAILED."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE,
+            "for i in 0..n { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("not found unchanged", diagnostics)
+
+    def test_range_dropped_entirely_fails(self):
+        """A loop rewritten without the range cannot be confirmed: FAILED."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE,
+            "let mut i = 1;\nwhile i < n { total += i; i += 1; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("not found unchanged", diagnostics)
+
+    def test_unsupported_source_range_syntax_fails(self):
+        """Inclusive source bounds are not a recognized rule: never silently PASS."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            "for i in 1..=n",
+            "for i in 1..=n { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("Unsupported range syntax", diagnostics)
+
+    def test_open_ended_source_range_fails(self):
+        """Malformed source range (`1..`) must not silently pass."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            "for i in 1..",
+            "for i in 1.. { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("Unsupported range syntax", diagnostics)
+
+    def test_expression_bound_in_generated_code_fails(self):
+        """A bound rewritten as an expression (`n-1`) cannot be confirmed: FAILED."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE,
+            "for i in 1..(n - 1) { total += i; }",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("not found unchanged", diagnostics)
+
+    def test_no_range_constraints_passes_vacuously(self):
+        """A source without range syntax has no range constraints to check."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            "int a,b\ninput(a,b)\n输出(a+b)",
+            "print(1)",
+            "rust",
+        )
+        self.assertTrue(tool_available)
+        self.assertTrue(passed)
+        self.assertEqual(diagnostics, "")
+
+    def test_unavailable_for_c_and_python(self):
+        """Fidelity rules are implemented for Rust only; others are unavailable."""
+        import p17
+
+        for target in ("c", "python"):
+            passed, diagnostics, tool_available = p17.verify_fidelity(
+                self._SOURCE, "x", target
+            )
+            self.assertFalse(tool_available)
+            self.assertFalse(passed)
+            self.assertIn("not implemented", diagnostics)
+
+    def test_unknown_target_unavailable(self):
+        """Unknown targets report unavailable — never silently pass."""
+        import p17
+
+        passed, diagnostics, tool_available = p17.verify_fidelity(
+            self._SOURCE, "x", "zig"
+        )
+        self.assertFalse(tool_available)
+        self.assertFalse(passed)
+        self.assertIn("unknown target", diagnostics)
+
+    # ------------------------------------------------------------------
+    # CLI: --verify-file + --source (no API keys, no LLM)
+    # ------------------------------------------------------------------
+
+    _NO_API_ENV = {"P17_API_URL": "", "P17_API_KEY": "", "PATH": os.environ["PATH"]}
+
+    def _require_rustc(self):
+        import shutil
+        if shutil.which("rustc") is None:
+            self.skipTest("rustc not available")
+
+    def _write(self, content: str, suffix: str) -> str:
+        with tempfile.NamedTemporaryFile(suffix=suffix, mode="w", delete=False) as f:
+            f.write(content)
+            return f.name
+
+    def test_cli_fidelity_pass(self):
+        """Exclusive range preserved: exit 0 with FIDELITY PASS, no LLM."""
+        self._require_rustc()
+
+        src = self._write("for i in 1..n\n", ".p17")
+        gen = self._write(
+            "fn main() {\n"
+            "    let n = 5;\n"
+            "    for i in 1..n {\n"
+            '        println!("{i}");\n'
+            "    }\n"
+            "}\n",
+            ".rs",
+        )
+        try:
+            result = run_p17(
+                "--verify-file", gen, "--target", "rust", "--source", src,
+                env=self._NO_API_ENV,
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"Fidelity should pass without API keys. stderr={result.stderr!r}",
+            )
+            self.assertIn("FIDELITY PASS", result.stderr)
+            self.assertIn("VERIFIED", result.stderr)
+        finally:
+            os.unlink(src)
+            os.unlink(gen)
+
+    def test_cli_fidelity_failed_inclusive(self):
+        """Exclusive bound changed to inclusive: exit 1 with FIDELITY FAILED."""
+        self._require_rustc()
+
+        src = self._write("for i in 1..n\n", ".p17")
+        gen = self._write(
+            "fn main() {\n"
+            "    let n = 5;\n"
+            "    for i in 1..=n {\n"
+            '        println!("{i}");\n'
+            "    }\n"
+            "}\n",
+            ".rs",
+        )
+        try:
+            result = run_p17(
+                "--verify-file", gen, "--target", "rust", "--source", src,
+                env=self._NO_API_ENV,
+            )
+            self.assertEqual(result.returncode, 1,
+                             f"stderr={result.stderr!r}")
+            self.assertIn("FIDELITY FAILED", result.stderr)
+            self.assertIn("1..=n", result.stderr)
+        finally:
+            os.unlink(src)
+            os.unlink(gen)
+
+    def test_cli_malformed_generated_never_passes_fidelity(self):
+        """Malformed generated code fails target verification first — no FIDELITY PASS."""
+        self._require_rustc()
+
+        src = self._write("for i in 1..n\n", ".p17")
+        gen = self._write("this is not rust !!!\n", ".rs")
+        try:
+            result = run_p17(
+                "--verify-file", gen, "--target", "rust", "--source", src,
+                env=self._NO_API_ENV,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("VERIFICATION FAILED", result.stderr)
+            self.assertNotIn("FIDELITY PASS", result.stderr)
+        finally:
+            os.unlink(src)
+            os.unlink(gen)
+
+    def test_cli_fidelity_unavailable_for_python_target(self):
+        """Fidelity for a non-Rust target reports unavailable (exit 2)."""
+        src = self._write("for i in 1..n\n", ".p17")
+        gen = self._write("for i in range(1, 5):\n    pass\n", ".py")
+        try:
+            result = run_p17(
+                "--verify-file", gen, "--target", "python", "--source", src,
+                env=self._NO_API_ENV,
+            )
+            self.assertEqual(result.returncode, 2,
+                             f"stderr={result.stderr!r}")
+            self.assertIn("not implemented", result.stderr)
+            self.assertNotIn("FIDELITY PASS", result.stderr)
+        finally:
+            os.unlink(src)
+            os.unlink(gen)
+
+    def test_cli_source_requires_verify_file(self):
+        """--source without --verify-file is an error (exit 2)."""
+        result = run_p17("--source", "anything.p17", env=self._NO_API_ENV)
+        self.assertEqual(result.returncode, 2,
+                         f"stderr={result.stderr!r}")
+        self.assertIn("--source requires --verify-file", result.stderr)
+
+    def test_cli_source_file_not_found(self):
+        """A missing fidelity source file is an error (exit 2), never a pass."""
+        gen = self._write("x = 1\n", ".py")
+        try:
+            result = run_p17(
+                "--verify-file", gen, "--target", "python",
+                "--source", "/nonexistent/source.p17",
+                env=self._NO_API_ENV,
+            )
+            self.assertEqual(result.returncode, 2,
+                             f"stderr={result.stderr!r}")
+            self.assertIn("source file not found", result.stderr)
+            self.assertNotIn("FIDELITY PASS", result.stderr)
+        finally:
+            os.unlink(gen)
+
+
+# ---------------------------------------------------------------------------
 # Provider tests
 # ---------------------------------------------------------------------------
 

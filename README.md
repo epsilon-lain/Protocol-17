@@ -153,7 +153,7 @@ Is the target code valid?
 If a toolchain is unavailable, the verifier reports it clearly rather than
 pretending verification passed.
 
-### Fidelity verification (not yet implemented)
+### Fidelity verification (first rule implemented)
 
 ```
 Is the target code faithful to the user's constraints?
@@ -194,8 +194,25 @@ cnt[p]++;       // bypasses the explicit intermediate read
 
 Again, compiles fine. Again, not faithful.
 
-Fidelity verification is a future layer that checks whether generated code
-respects the user's explicit constraints — not just whether it type-checks.
+**Implemented rule — borrowed range semantics (Rust).** The fidelity
+verifier is deterministic (no LLM): every exclusive range `a..b` in the
+`.p17` source must appear unchanged in the generated Rust.
+
+| Source | Generated Rust | Verdict |
+|---|---|---|
+| `for i in 1..n` | `for i in 1..n` | `FIDELITY PASS` |
+| `for i in 1..n` | `for i in 1..=n` | `FIDELITY FAILED` — upper bound became inclusive |
+
+```bash
+python src/p17.py --verify-file generated.rs --target rust --source source.p17
+```
+
+Inclusive bounds (`a..=b`), changed or missing bounds, and any range syntax
+the rule does not recognize are reported as failed — fidelity never silently
+passes input it cannot verify.  Fidelity rules for other constructs
+(operation preservation, data-flow preservation, …) and other targets are
+still future work; the verifier reports them as unavailable instead of
+guessing.
 
 ---
 
@@ -399,6 +416,7 @@ python src/p17.py [--target {c,python,rust}] [file] [options]
 | `--build-dir` | Output directory (default: `build/`) |
 | `--verify-file` | Verify already-generated code without calling the model |
 | `--verify-file` + `--target` | Select target for verification |
+| `--verify-file` + `--source` | Fidelity verification: check generated code against the `.p17` source (Rust) |
 
 ### Exit codes
 
@@ -457,6 +475,7 @@ Protocol 17 is an **experimental alpha**. Expect rough edges.
 - Forward translation: P17 → C17 / Python 3 / Rust
 - Reverse translation: code → English + mathematical notation
 - Deterministic target verification (C17, Python 3, Rust)
+- Deterministic fidelity verification — borrowed Rust range semantics (`1..n` vs `1..=n`)
 - C17 compile + run
 - Python 3 and Rust translate + verify
 - VS Code dual-pane prototype with syntax highlighting
@@ -467,7 +486,7 @@ Protocol 17 is an **experimental alpha**. Expect rough edges.
 
 - Formal syntax specification
 - Parser / AST / IR
-- Protocol 17 fidelity verification (target code may compile but not be faithful)
+- Full fidelity verification (Rust range-bound rule implemented; other rules pending)
 - Python/Rust execution
 - Multi-file projects
 - Incremental translation

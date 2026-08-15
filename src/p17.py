@@ -21,6 +21,7 @@ precedence over values from the file.
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -532,6 +533,97 @@ def verify_target(source_path: str, target: str) -> tuple[bool, str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# Fidelity verification — deterministic constraint-preservation checks
+# ---------------------------------------------------------------------------
+
+# Borrowed Rust range syntax: `a..b` is exclusive.  Bounds are recognized
+# only as single identifiers/numerals — a bound followed by anything that
+# could continue an expression (`.`, `(`, `[`, operators) is not recognized,
+# so it can never be silently matched against a plain bound.
+_RANGE_BOUND_TAIL = r"[\w.+*/%(\[-]"
+_RANGE_EXCLUSIVE_RE = re.compile(
+    rf"(?<![\w.])(\w+)\s*\.\.(?!\s*=)\s*(\w+)(?!{_RANGE_BOUND_TAIL})"
+)
+_RANGE_INCLUSIVE_RE = re.compile(
+    rf"(?<![\w.])(\w+)\s*\.\.=\s*(\w+)(?!{_RANGE_BOUND_TAIL})"
+)
+_RANGE_TOKEN_RE = re.compile(r"\.{2,3}=?")
+
+
+def verify_fidelity(
+    p17_source: str, generated_code: str, target: str
+) -> tuple[bool, str, bool]:
+    """Deterministically check that generated code preserves the explicit
+    constraints of the .p17 source.  No LLM involved.
+
+    Implemented rule (Rust only): borrowed range syntax `a..b` in the source
+    is exclusive.  If the generated code turns it into `a..=b`, the upper
+    bound becomes inclusive — a semantic change, not a formatting change.
+    Every exclusive range in the source must appear unchanged (same bounds,
+    still exclusive) in the generated code.
+
+    Range syntax this rule does not recognize — inclusive source bounds,
+    expression bounds, open-ended `..` — is reported as FAILED: fidelity
+    must never silently pass input it cannot verify.
+
+    Returns (passed, diagnostics, tool_available).
+    """
+    if target in ("c", "python"):
+        return (
+            False,
+            f"Fidelity verification unavailable: not implemented for target '{target}'",
+            False,
+        )
+    if target != "rust":
+        return (
+            False,
+            f"Fidelity verification unavailable: unknown target '{target}'",
+            False,
+        )
+
+    source_ranges = _RANGE_EXCLUSIVE_RE.findall(p17_source)
+
+    # Any `..` / `..=` / `...` left in the source is range syntax this rule
+    # does not understand — fail instead of silently passing it.
+    leftover = _RANGE_EXCLUSIVE_RE.sub("", p17_source)
+    unsupported = _RANGE_TOKEN_RE.search(leftover)
+    if unsupported is not None:
+        return (
+            False,
+            f"Unsupported range syntax in source ({unsupported.group()!r}) "
+            "— cannot verify fidelity",
+            True,
+        )
+
+    if not source_ranges:
+        return (True, "", True)  # no range constraints to check
+
+    # The upper-bound change the rule exists for: exclusive became inclusive.
+    target_inclusive = set(_RANGE_INCLUSIVE_RE.findall(generated_code))
+    for start, end in source_ranges:
+        if (start, end) in target_inclusive:
+            return (
+                False,
+                f"range bound {start}..{end} was changed to inclusive {start}..={end}",
+                True,
+            )
+
+    # Positive confirmation: each source range must be present unchanged.
+    # This also catches dropped ranges and changed lower/upper bounds.
+    target_exclusive = set(_RANGE_EXCLUSIVE_RE.findall(generated_code))
+    for start, end in source_ranges:
+        if (start, end) not in target_exclusive:
+            return (
+                False,
+                f"range {start}..{end} from source not found unchanged "
+                "in generated code",
+                True,
+            )
+
+    return (True, "", True)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -572,6 +664,11 @@ def main() -> None:
         help="Verify an already-generated target file without translation (use with --target)",
     )
     parser.add_argument(
+        "--source", default=None,
+        help="Path to the .p17 source for fidelity verification "
+             "(use with --verify-file and --target rust)",
+    )
+    parser.add_argument(
         "--test-provider", action="store_true",
         help="Test the configured provider can respond to a minimal request. "
              "Exits 0 on success, 1 on failure. Never prints credentials.",
@@ -585,6 +682,10 @@ def main() -> None:
     env_file = find_env_file()
     if env_file is not None:
         load_env_file(env_file)
+
+    if args.source and not args.verify_file:
+        print("Error: --source requires --verify-file.", file=sys.stderr)
+        sys.exit(2)
 
     # ------------------------------------------------------------------
     # Verification-only mode — no API key, no model, no translation
@@ -608,13 +709,41 @@ def main() -> None:
 
         if passed:
             print(f"VERIFIED: {args.verify_file} ({args.target})", file=sys.stderr)
-            sys.exit(0)
         else:
             print(
                 f"VERIFICATION FAILED: {args.verify_file} ({args.target})",
                 file=sys.stderr,
             )
             sys.exit(1)
+
+        # ----------------------------------------------------------
+        # Fidelity verification — deterministic, no LLM, and only run
+        # once the target code is known to be valid.
+        # ----------------------------------------------------------
+        if args.source:
+            source_path = Path(args.source)
+            if not source_path.exists():
+                print(f"Error: source file not found — {args.source}", file=sys.stderr)
+                sys.exit(2)
+            p17_source = source_path.read_text().strip()
+            if not p17_source:
+                print(f"Error: empty source file — {args.source}", file=sys.stderr)
+                sys.exit(2)
+
+            generated_code = verify_path.read_text()
+            fidelity_passed, fidelity_diag, fidelity_available = verify_fidelity(
+                p17_source, generated_code, args.target
+            )
+            if not fidelity_available:
+                print(fidelity_diag, file=sys.stderr)
+                sys.exit(2)
+            if fidelity_passed:
+                print("FIDELITY PASS", file=sys.stderr)
+            else:
+                print(f"FIDELITY FAILED: {fidelity_diag}", file=sys.stderr)
+                sys.exit(1)
+
+        sys.exit(0)
 
     # ------------------------------------------------------------------
     # Provider connection test — minimal, never prints credentials
