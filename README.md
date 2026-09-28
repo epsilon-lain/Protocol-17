@@ -401,6 +401,25 @@ P17_MODEL=qwen3:4b-instruct
 
 ## CLI reference
 
+### Agent handoff (offline)
+
+For planner → implementer → reviewer work on existing projects, see
+[`docs/agent-handoff.md`](docs/agent-handoff.md). A `.p17` intent, a JSON
+manifest, implementation files, and executable acceptance checks produce
+machine-readable evidence without a model call:
+
+```bash
+python src/p17_agent.py path/to/project/handoff.json > evidence.json
+```
+
+Python agents can also call `verify_handoff(manifest, workspace=...)` or
+`verify_handoff_file(path)` and receive the same structured result.
+
+This checks declared artifacts and tests. It reports prose-to-code fidelity
+as unverified and requires independent review of the original requirement.
+
+### Translation CLI
+
 ```
 python src/p17.py [--target {c,python,rust}] [file] [options]
 ```
