@@ -63,8 +63,14 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
     """Run the normalized check; 0 pass, 1 failure, 2 unavailable."""
     result: dict = {
         "schema_version": 1, "status": "UNAVAILABLE", "intent_sha256": None,
-        "artifacts": [], "checks": [], "fidelity": "unverified",
-        "diagnostics": [],
+        "artifacts": [], "checks": [], "coverage": {
+            "status": "not_declared", "sources": [], "items": [], "gaps": [],
+            "note": (
+                "Coverage reports only declared requirement-to-check linkage. "
+                "It does not establish requirement completeness or test sufficiency."
+            ),
+        },
+        "fidelity": "unverified", "diagnostics": [],
     }
     try:
         if (not isinstance(manifest, dict) or
@@ -111,6 +117,80 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 raise ManifestError(f"{name}: expect_stdout must be a string")
             commands.append((name, argv, expected, timeout, stdout_expected))
 
+        # Optional requirement coverage block. When absent, schema_version=1
+        # behaviour is unchanged. When present, every declared requirement must
+        # reference at least one existing check name; otherwise the result is
+        # FAILED with exit code 1.
+        coverage_hard_fail = False
+        requirement_spec = manifest.get("requirements")
+        if requirement_spec is not None:
+            if not isinstance(requirement_spec, dict):
+                raise ManifestError("requirements must be an object")
+
+            sources = requirement_spec.get("sources")
+            if not isinstance(sources, list) or not sources:
+                raise ManifestError("requirements.sources must be a nonempty list")
+            for value in sources:
+                if not isinstance(value, str) or not value:
+                    raise ManifestError("requirements.sources must be nonempty relative strings")
+                path = _file(root, value)
+                result["coverage"]["sources"].append({
+                    "path": value,
+                    "sha256": _digest(path),
+                })
+
+            items = requirement_spec.get("items")
+            if not isinstance(items, list) or not items:
+                raise ManifestError("requirements.items must be a nonempty list")
+            check_names = {name for name, *_ in commands}
+            seen_ids: set[str] = set()
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ManifestError("each requirement must be an object")
+                req_id = _nonempty_str(item.get("id"), "requirement id")
+                if req_id in seen_ids:
+                    raise ManifestError(f"duplicate requirement id: {req_id}")
+                seen_ids.add(req_id)
+
+                description = item.get("description")
+                if description is not None and (
+                    not isinstance(description, str) or not description.strip()
+                ):
+                    raise ManifestError(
+                        f"requirement {req_id}: description must be a nonempty string"
+                    )
+
+                req_checks = item.get("checks", [])
+                if (not isinstance(req_checks, list) or
+                        not all(isinstance(name, str) and name for name in req_checks)):
+                    raise ManifestError(
+                        f"requirement {req_id}: checks must be a list of check names"
+                    )
+
+                gaps: list[str] = []
+                if not req_checks:
+                    gaps.append(f"requirement '{req_id}' has no associated check")
+                else:
+                    missing = [name for name in req_checks if name not in check_names]
+                    if missing:
+                        gaps.append(
+                            f"requirement '{req_id}' references unknown check(s): "
+                            + ", ".join(missing)
+                        )
+
+                result["coverage"]["items"].append({
+                    "id": req_id,
+                    "description": description if description is not None else "",
+                    "checks": req_checks,
+                    "gaps": gaps,
+                })
+                result["coverage"]["gaps"].extend(gaps)
+
+            result["coverage"]["status"] = (
+                "FAILED" if result["coverage"]["gaps"] else "PASS"
+            )
+            coverage_hard_fail = result["coverage"]["status"] == "FAILED"
+
         for item, path in resolved_artifacts:
             passed, diagnostic, available = verify_target(str(path), item["target"])
             record = {
@@ -146,6 +226,9 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
             if not passed:
                 result["status"] = "FAILED"
                 return result, 1
+        if coverage_hard_fail:
+            result["status"] = "FAILED"
+            return result, 1
         result["status"] = "PASS"
         return result, 0
     except (OSError, UnicodeError, ValueError, ManifestError) as exc:

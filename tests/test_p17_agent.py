@@ -115,6 +115,73 @@ class AgentHandoffTests(unittest.TestCase):
         self.assertFalse((self.root / "ran").exists())
         self.assertEqual(result["checks"], [])
 
+    def _write_requirements(self):
+        (self.root / "requirements.md").write_text(
+            "# Original requirement\n\nReturn the exact sum.\n",
+            encoding="utf-8",
+        )
+
+    def test_legacy_manifest_without_requirements_remains_compatible(self):
+        self.assertNotIn("requirements", self.manifest)
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["coverage"]["status"], "not_declared")
+        self.assertEqual(result["coverage"]["items"], [])
+
+    def test_valid_requirement_linkage_reports_hashed_source(self):
+        self._write_requirements()
+        self.manifest["requirements"] = {
+            "sources": ["requirements.md"],
+            "items": [{"id": "req-sum", "checks": ["add behavior"]}],
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["coverage"]["status"], "PASS")
+        self.assertEqual(result["coverage"]["items"][0]["id"], "req-sum")
+        self.assertEqual(
+            result["coverage"]["sources"][0]["sha256"],
+            hashlib.sha256((self.root / "requirements.md").read_bytes()).hexdigest(),
+        )
+
+    def test_requirement_without_check_is_failed_not_pass(self):
+        self._write_requirements()
+        self.manifest["requirements"] = {
+            "sources": ["requirements.md"],
+            "items": [{"id": "req-sum", "checks": []}],
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(result["coverage"]["status"], "FAILED")
+        self.assertTrue(any("has no associated check" in gap for gap in result["coverage"]["gaps"]))
+
+    def test_requirement_referencing_unknown_check_is_failed(self):
+        self._write_requirements()
+        self.manifest["requirements"] = {
+            "sources": ["requirements.md"],
+            "items": [{"id": "req-sum", "checks": ["does-not-exist"]}],
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(result["coverage"]["status"], "FAILED")
+        self.assertTrue(any("references unknown check" in gap for gap in result["coverage"]["gaps"]))
+
+    def test_behavior_failure_with_valid_coverage_still_fails(self):
+        self._write_requirements()
+        self.manifest["requirements"] = {
+            "sources": ["requirements.md"],
+            "items": [{"id": "req-sum", "checks": ["add behavior"]}],
+        }
+        (self.root / "app.py").write_text("def add(a, b):\n    return a - b\n")
+        code, result = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(result["coverage"]["status"], "PASS")
+        self.assertEqual(result["checks"][0]["status"], "FAILED")
+
 
 if __name__ == "__main__":
     unittest.main()

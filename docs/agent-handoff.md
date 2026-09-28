@@ -29,6 +29,46 @@ Given two integers a and b, compute a+b. The result must be the exact sum.
 }
 ```
 
+Optional requirement coverage uses the same `schema_version: 1` manifest and
+adds a `requirements` object. It does not change old manifests:
+
+```json
+{
+  "schema_version": 1,
+  "intent": "intent.p17",
+  "artifacts": [{"path": "app.py", "target": "python"}],
+  "checks": [
+    {"name": "sum acceptance", "argv": ["@python", "test_app.py"], "expect_exit": 0}
+  ],
+  "requirements": {
+    "sources": ["requirements.md"],
+    "items": [
+      {
+        "id": "req-sum",
+        "description": "The implementation returns the exact sum.",
+        "checks": ["sum acceptance"]
+      }
+    ]
+  }
+}
+```
+
+`requirements.sources` is a nonempty list of original requirement files inside
+the manifest directory. Each source file is hashed in the output so a reviewer
+can confirm they are checking the same version. `requirements.items` is a
+nonempty list of objects with:
+
+- a unique `id`
+- an optional `description`
+- a `checks` list of existing check names
+
+If an item has an empty `checks` list, or references a check name that does not
+exist in the top-level `checks` array, the overall status is `FAILED` with exit
+code `1`. The output separates `coverage` (declared requirement linkage) from
+`checks` (what actually ran) and `fidelity` (always `unverified`). Coverage is
+not a completeness proof: an independent reviewer must still compare the
+original requirement file against the implementation and tests.
+
 From the repository root:
 
 ```sh
