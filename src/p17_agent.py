@@ -64,12 +64,14 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
     result: dict = {
         "schema_version": 1, "status": "UNAVAILABLE", "intent_sha256": None,
         "artifacts": [], "checks": [], "coverage": {
-            "status": "not_declared", "sources": [], "items": [], "gaps": [],
+            "linkage": "not_declared", "sources": [], "items": [], "gaps": [],
             "note": (
                 "Coverage reports only declared requirement-to-check linkage. "
-                "It does not establish requirement completeness or test sufficiency."
+                "linkage=complete means every declared requirement references an "
+                "existing check; it is not a pass/fail result for those checks."
             ),
         },
+        "inputs": [],
         "fidelity": "unverified", "diagnostics": [],
     }
     try:
@@ -105,6 +107,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
             argv = item.get("argv")
             expected = item.get("expect_exit")
             timeout = item.get("timeout_seconds", 30)
+            script_rel = item.get("file")
             if (not isinstance(argv, list) or not argv or
                     not all(isinstance(arg, str) and arg for arg in argv)):
                 raise ManifestError(f"{name}: argv must be a nonempty string list")
@@ -115,7 +118,27 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
             stdout_expected = item.get("expect_stdout")
             if stdout_expected is not None and not isinstance(stdout_expected, str):
                 raise ManifestError(f"{name}: expect_stdout must be a string")
-            commands.append((name, argv, expected, timeout, stdout_expected))
+            script_path = _file(root, script_rel) if script_rel is not None else None
+            commands.append(
+                (name, argv, expected, timeout, stdout_expected, script_rel, script_path)
+            )
+
+        # Optional generic declared-input hashes. Unlike artifacts (compiler
+        # targets), requirements.sources (requirement text), and intent, these
+        # files have no other role in the check; hashing them still anchors the
+        # exact bytes the implementer declared as inputs.
+        inputs_spec = manifest.get("inputs")
+        if inputs_spec is not None:
+            if not isinstance(inputs_spec, list):
+                raise ManifestError("inputs must be a list")
+            for item in inputs_spec:
+                if not isinstance(item, dict) or "path" not in item:
+                    raise ManifestError("each input needs a path")
+                path = _file(root, item.get("path"))
+                result["inputs"].append({
+                    "path": item["path"],
+                    "sha256": _digest(path),
+                })
 
         # Optional requirement coverage block. When absent, schema_version=1
         # behaviour is unchanged. When present, every declared requirement must
@@ -186,10 +209,10 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 })
                 result["coverage"]["gaps"].extend(gaps)
 
-            result["coverage"]["status"] = (
-                "FAILED" if result["coverage"]["gaps"] else "PASS"
+            result["coverage"]["linkage"] = (
+                "incomplete" if result["coverage"]["gaps"] else "complete"
             )
-            coverage_hard_fail = result["coverage"]["status"] == "FAILED"
+            coverage_hard_fail = result["coverage"]["linkage"] == "incomplete"
 
         for item, path in resolved_artifacts:
             passed, diagnostic, available = verify_target(str(path), item["target"])
@@ -204,7 +227,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 result["status"] = record["status"]
                 return result, 1 if available else 2
 
-        for name, argv, expected, timeout, stdout_expected in commands:
+        for name, argv, expected, timeout, stdout_expected, script_rel, script_path in commands:
             command = [sys.executable if arg == "@python" else arg for arg in argv]
             try:
                 run = subprocess.run(
@@ -212,17 +235,25 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                     timeout=timeout, check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                result["checks"].append({"name": name, "status": "UNAVAILABLE", "diagnostic": str(exc)})
+                record = {"name": name, "status": "UNAVAILABLE", "diagnostic": str(exc)}
+                if script_rel is not None:
+                    record["file"] = script_rel
+                    record["file_sha256"] = _digest(script_path)
+                result["checks"].append(record)
                 result["status"] = "UNAVAILABLE"
                 return result, 2
             passed = run.returncode == expected and (
                 stdout_expected is None or run.stdout == stdout_expected
             )
-            result["checks"].append({
+            record = {
                 "name": name, "status": "PASS" if passed else "FAILED",
                 "exit_code": run.returncode, "stdout": run.stdout,
                 "stderr": run.stderr,
-            })
+            }
+            if script_rel is not None:
+                record["file"] = script_rel
+                record["file_sha256"] = _digest(script_path)
+            result["checks"].append(record)
             if not passed:
                 result["status"] = "FAILED"
                 return result, 1

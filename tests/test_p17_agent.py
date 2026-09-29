@@ -126,7 +126,7 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 0)
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["coverage"]["status"], "not_declared")
+        self.assertEqual(result["coverage"]["linkage"], "not_declared")
         self.assertEqual(result["coverage"]["items"], [])
 
     def test_valid_requirement_linkage_reports_hashed_source(self):
@@ -138,7 +138,7 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 0)
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["coverage"]["status"], "PASS")
+        self.assertEqual(result["coverage"]["linkage"], "complete")
         self.assertEqual(result["coverage"]["items"][0]["id"], "req-sum")
         self.assertEqual(
             result["coverage"]["sources"][0]["sha256"],
@@ -154,7 +154,7 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 1)
         self.assertEqual(result["status"], "FAILED")
-        self.assertEqual(result["coverage"]["status"], "FAILED")
+        self.assertEqual(result["coverage"]["linkage"], "incomplete")
         self.assertTrue(any("has no associated check" in gap for gap in result["coverage"]["gaps"]))
 
     def test_requirement_referencing_unknown_check_is_failed(self):
@@ -166,7 +166,7 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 1)
         self.assertEqual(result["status"], "FAILED")
-        self.assertEqual(result["coverage"]["status"], "FAILED")
+        self.assertEqual(result["coverage"]["linkage"], "incomplete")
         self.assertTrue(any("references unknown check" in gap for gap in result["coverage"]["gaps"]))
 
     def test_behavior_failure_with_valid_coverage_still_fails(self):
@@ -179,8 +179,42 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 1)
         self.assertEqual(result["status"], "FAILED")
-        self.assertEqual(result["coverage"]["status"], "PASS")
+        self.assertEqual(result["coverage"]["linkage"], "complete")
         self.assertEqual(result["checks"][0]["status"], "FAILED")
+
+    def test_acceptance_script_hash_is_recorded_and_changes(self):
+        self.manifest["checks"][0]["file"] = "test_app.py"
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        first_hash = result["checks"][0]["file_sha256"]
+        self.assertEqual(result["checks"][0]["file"], "test_app.py")
+        self.assertEqual(
+            first_hash,
+            hashlib.sha256((self.root / "test_app.py").read_bytes()).hexdigest(),
+        )
+        (self.root / "test_app.py").write_text(
+            "from app import add\nassert add(1, 2) == 3\n# acceptance script changed\n",
+            encoding="utf-8",
+        )
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertNotEqual(first_hash, result["checks"][0]["file_sha256"])
+
+    def test_declared_input_hash_is_recorded_and_changes(self):
+        (self.root / "data.txt").write_text("fixture-v1\n", encoding="utf-8")
+        self.manifest["inputs"] = [{"path": "data.txt"}]
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        first_hash = result["inputs"][0]["sha256"]
+        self.assertEqual(result["inputs"][0]["path"], "data.txt")
+        self.assertEqual(
+            first_hash,
+            hashlib.sha256((self.root / "data.txt").read_bytes()).hexdigest(),
+        )
+        (self.root / "data.txt").write_text("fixture-v2\n", encoding="utf-8")
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertNotEqual(first_hash, result["inputs"][0]["sha256"])
 
 
 if __name__ == "__main__":

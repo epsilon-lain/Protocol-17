@@ -24,10 +24,34 @@ Given two integers a and b, compute a+b. The result must be the exact sum.
   "intent": "intent.p17",
   "artifacts": [{"path": "app.py", "target": "python"}],
   "checks": [
-    {"name": "sum acceptance", "argv": ["@python", "test_app.py"], "expect_exit": 0}
+    {
+      "name": "sum acceptance",
+      "file": "test_app.py",
+      "argv": ["@python", "test_app.py"],
+      "expect_exit": 0
+    }
   ]
 }
 ```
+
+`checks[].file` is an optional relative path to the acceptance script actually
+executed by that check. When present, the output records both `file` and
+`file_sha256`, so a replaced or weakened script is detectable from the evidence
+itself. It is independent from `argv`: `argv` still says exactly how to run the
+check, while `file` names the script whose bytes are anchored.
+
+The manifest may also list additional declared input files that have no other
+role in the check with the optional top-level `inputs` array:
+
+```json
+"inputs": [{"path": "fixtures/cases.txt"}]
+```
+
+Each entry is hashed in the output as `inputs[].path` and `inputs[].sha256`.
+These are declaration-driven, so the implementer decides which input files must
+be version-anchored; `artifacts`, `intent`, and `requirements.sources` already
+have their own hashes. A git commit id can accompany these hashes as a
+convenience pointer but never replaces them.
 
 Optional requirement coverage uses the same `schema_version: 1` manifest and
 adds a `requirements` object. It does not change old manifests:
@@ -38,8 +62,14 @@ adds a `requirements` object. It does not change old manifests:
   "intent": "intent.p17",
   "artifacts": [{"path": "app.py", "target": "python"}],
   "checks": [
-    {"name": "sum acceptance", "argv": ["@python", "test_app.py"], "expect_exit": 0}
+    {
+      "name": "sum acceptance",
+      "file": "test_app.py",
+      "argv": ["@python", "test_app.py"],
+      "expect_exit": 0
+    }
   ],
+  "inputs": [{"path": "fixtures/cases.txt"}],
   "requirements": {
     "sources": ["requirements.md"],
     "items": [
@@ -64,10 +94,19 @@ nonempty list of objects with:
 
 If an item has an empty `checks` list, or references a check name that does not
 exist in the top-level `checks` array, the overall status is `FAILED` with exit
-code `1`. The output separates `coverage` (declared requirement linkage) from
-`checks` (what actually ran) and `fidelity` (always `unverified`). Coverage is
-not a completeness proof: an independent reviewer must still compare the
-original requirement file against the implementation and tests.
+code `1`. The output separates `coverage.linkage` (declared requirement-to-check
+linkage) from `checks` (what actually ran) and `fidelity` (always `unverified`).
+`coverage.linkage` is a neutral completeness label, not a pass/fail result:
+
+- `not_declared`: no `requirements` block was supplied;
+- `complete`: every declared requirement references at least one existing check;
+- `incomplete`: at least one declared requirement has no existing check.
+
+`linkage: "complete"` does **not** mean those checks passed. A manifest whose
+linkage is complete can still have an overall `status` of `FAILED` and a
+`checks[].status` of `FAILED` when a check actually fails. An independent
+reviewer must still compare the original requirement file against the
+implementation and tests.
 
 From the repository root:
 
