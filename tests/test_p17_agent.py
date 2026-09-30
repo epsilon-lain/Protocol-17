@@ -126,6 +126,7 @@ class AgentHandoffTests(unittest.TestCase):
         code, result = self.run_check()
         self.assertEqual(code, 0)
         self.assertEqual(result["status"], "PASS")
+        self.assertNotIn("inputs", result)
         self.assertEqual(result["coverage"]["linkage"], "not_declared")
         self.assertEqual(result["coverage"]["items"], [])
 

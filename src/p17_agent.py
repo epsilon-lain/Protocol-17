@@ -71,7 +71,6 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 "existing check; it is not a pass/fail result for those checks."
             ),
         },
-        "inputs": [],
         "fidelity": "unverified", "diagnostics": [],
     }
     try:
@@ -131,6 +130,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
         if inputs_spec is not None:
             if not isinstance(inputs_spec, list):
                 raise ManifestError("inputs must be a list")
+            result["inputs"] = []
             for item in inputs_spec:
                 if not isinstance(item, dict) or "path" not in item:
                     raise ManifestError("each input needs a path")

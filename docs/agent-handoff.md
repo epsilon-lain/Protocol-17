@@ -48,6 +48,8 @@ role in the check with the optional top-level `inputs` array:
 ```
 
 Each entry is hashed in the output as `inputs[].path` and `inputs[].sha256`.
+The top-level `inputs` field appears in the output only when the manifest
+declares it.
 These are declaration-driven, so the implementer decides which input files must
 be version-anchored; `artifacts`, `intent`, and `requirements.sources` already
 have their own hashes. A git commit id can accompany these hashes as a
