@@ -201,6 +201,39 @@ class AgentHandoffTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotEqual(first_hash, result["checks"][0]["file_sha256"])
 
+    def test_direct_invocation_file_argv_mismatch_is_unavailable(self):
+        (self.root / "verify_good.py").write_text("print('good')\n", encoding="utf-8")
+        (self.root / "verify_bad.py").write_text("print('bad')\n", encoding="utf-8")
+        self.manifest["checks"][0] = {
+            "name": "script identity",
+            "file": "verify_good.py",
+            "argv": ["@python", "verify_bad.py"],
+            "expect_exit": 0,
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 2)
+        self.assertEqual(result["status"], "UNAVAILABLE")
+        self.assertEqual(result["checks"], [])
+
+    def test_direct_invocation_file_matches_argv_labels_executed(self):
+        self.manifest["checks"][0]["file"] = "test_app.py"
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["checks"][0]["file"], "test_app.py")
+        self.assertEqual(result["checks"][0]["file_attribution"], "executed")
+
+    def test_non_direct_command_with_file_labels_declared(self):
+        self.manifest["checks"][0] = {
+            "name": "inline",
+            "file": "test_app.py",
+            "argv": ["@python", "-c", "assert True"],
+            "expect_exit": 0,
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["checks"][0]["file"], "test_app.py")
+        self.assertEqual(result["checks"][0]["file_attribution"], "declared")
+
     def test_declared_input_hash_is_recorded_and_changes(self):
         (self.root / "data.txt").write_text("fixture-v1\n", encoding="utf-8")
         self.manifest["inputs"] = [{"path": "data.txt"}]

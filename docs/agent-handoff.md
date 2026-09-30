@@ -56,7 +56,7 @@ have their own hashes. A git commit id can accompany these hashes as a
 convenience pointer but never replaces them.
 
 Optional requirement coverage uses the same `schema_version: 1` manifest and
-adds a `requirements` object. It does not change old manifests:
+adds a `requirements` object:
 
 ```json
 {
@@ -103,6 +103,20 @@ linkage) from `checks` (what actually ran) and `fidelity` (always `unverified`).
 - `not_declared`: no `requirements` block was supplied;
 - `complete`: every declared requirement references at least one existing check;
 - `incomplete`: at least one declared requirement has no existing check.
+
+### Output compatibility: `coverage.status` → `coverage.linkage`
+
+Schema-version-1 manifests are still accepted unchanged: the input is backward
+compatible. The evidence JSON's `coverage` object is an output interface
+change, not full compatibility. `coverage.status` is removed and
+`coverage.linkage` is added, so consumers of the old evidence must rename the
+field and remap the values:
+
+| Old `coverage.status` | New `coverage.linkage` |
+|---|---|
+| `not_declared` | `not_declared` |
+| `PASS` | `complete` |
+| `FAILED` | `incomplete` |
 
 `linkage: "complete"` does **not** mean those checks passed. A manifest whose
 linkage is complete can still have an overall `status` of `FAILED` and a

@@ -118,8 +118,22 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
             if stdout_expected is not None and not isinstance(stdout_expected, str):
                 raise ManifestError(f"{name}: expect_stdout must be a string")
             script_path = _file(root, script_rel) if script_rel is not None else None
+            # A direct script invocation is the only form whose script we can
+            # attribute confidently: exactly two argv entries, the interpreter
+            # placeholder and a script path that is not a flag.
+            is_direct = (
+                len(argv) == 2 and argv[0] == "@python"
+                and not argv[1].startswith("-")
+            )
+            if script_path is not None and is_direct:
+                argv_path = _file(root, argv[1])
+                if argv_path != script_path:
+                    raise ManifestError(
+                        f"{name}: file and argv[1] must name the same script"
+                    )
             commands.append(
-                (name, argv, expected, timeout, stdout_expected, script_rel, script_path)
+                (name, argv, expected, timeout, stdout_expected, script_rel,
+                 script_path, is_direct)
             )
 
         # Optional generic declared-input hashes. Unlike artifacts (compiler
@@ -227,7 +241,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 result["status"] = record["status"]
                 return result, 1 if available else 2
 
-        for name, argv, expected, timeout, stdout_expected, script_rel, script_path in commands:
+        for name, argv, expected, timeout, stdout_expected, script_rel, script_path, is_direct in commands:
             command = [sys.executable if arg == "@python" else arg for arg in argv]
             try:
                 run = subprocess.run(
@@ -239,6 +253,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 if script_rel is not None:
                     record["file"] = script_rel
                     record["file_sha256"] = _digest(script_path)
+                    record["file_attribution"] = "executed" if is_direct else "declared"
                 result["checks"].append(record)
                 result["status"] = "UNAVAILABLE"
                 return result, 2
@@ -253,6 +268,7 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
             if script_rel is not None:
                 record["file"] = script_rel
                 record["file_sha256"] = _digest(script_path)
+                record["file_attribution"] = "executed" if is_direct else "declared"
             result["checks"].append(record)
             if not passed:
                 result["status"] = "FAILED"
