@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "intent": "intent.p17",
+  "artifacts": [
+    {
+      "path": "app.py",
+      "target": "python"
+    }
+  ],
+  "checks": [
+    {
+      "name": "script identity mismatch",
+      "file": "verify_good.py",
+      "argv": ["@python", "verify_bad.py"],
+      "expect_exit": 0
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "intent": "intent.p17",
+  "artifacts": [{"path": "app.py", "target": "python"}],
+  "inputs": [{"path": "cases.txt"}],
+  "checks": [
+    {
+      "name": "sum acceptance",
+      "file": "verify.py",
+      "argv": ["@python", "verify.py"],
+      "expect_exit": 0
+    }
+  ],
+  "requirements": {
+    "sources": ["requirements.md"],
+    "items": [
+      {
+        "id": "req-sum",
+        "description": "Return the exact sum.",
+        "checks": ["sum acceptance"]
+      }
+    ]
+  }
+}
