@@ -34,11 +34,20 @@ Given two integers a and b, compute a+b. The result must be the exact sum.
 }
 ```
 
-`checks[].file` is an optional relative path to the acceptance script actually
-executed by that check. When present, the output records both `file` and
-`file_sha256`, so a replaced or weakened script is detectable from the evidence
-itself. It is independent from `argv`: `argv` still says exactly how to run the
-check, while `file` names the script whose bytes are anchored.
+`checks[].file` is an optional relative path to the acceptance script. When
+present, the output records `file`, `file_sha256`, and a `file_attribution`
+that distinguishes two cases:
+
+- `executed`: the check is a direct invocation (`argv[0] == "@python"` and
+  `argv[1]` does not start with `-`). In this case `file` must name the same
+  script as `argv[1]`; otherwise the manifest is rejected with exit code `2`
+  (`UNAVAILABLE`). The bytes of the actually executed script are anchored.
+- `declared`: the check is not a direct invocation (for example an inline
+  `-c` command or a wrapper command). `file` names a script the implementer
+  declares as relevant, but it is not the script executed by `argv`.
+
+This keeps `argv` as the exact run instruction while making the evidence
+explicit about whether `file` is the executed script or only a declared one.
 
 The manifest may also list additional declared input files that have no other
 role in the check with the optional top-level `inputs` array:

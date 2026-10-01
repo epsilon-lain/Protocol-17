@@ -215,6 +215,20 @@ class AgentHandoffTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNAVAILABLE")
         self.assertEqual(result["checks"], [])
 
+    def test_direct_invocation_with_extra_arg_file_argv_mismatch_is_unavailable(self):
+        (self.root / "verify_good.py").write_text("print('good')\n", encoding="utf-8")
+        (self.root / "verify_bad.py").write_text("print('bad')\n", encoding="utf-8")
+        self.manifest["checks"][0] = {
+            "name": "script identity with args",
+            "file": "verify_good.py",
+            "argv": ["@python", "verify_bad.py", "--flag"],
+            "expect_exit": 0,
+        }
+        code, result = self.run_check()
+        self.assertEqual(code, 2)
+        self.assertEqual(result["status"], "UNAVAILABLE")
+        self.assertEqual(result["checks"], [])
+
     def test_direct_invocation_file_matches_argv_labels_executed(self):
         self.manifest["checks"][0]["file"] = "test_app.py"
         code, result = self.run_check()

@@ -119,10 +119,11 @@ def _check_manifest(manifest: object, root: Path) -> tuple[dict, int]:
                 raise ManifestError(f"{name}: expect_stdout must be a string")
             script_path = _file(root, script_rel) if script_rel is not None else None
             # A direct script invocation is the only form whose script we can
-            # attribute confidently: exactly two argv entries, the interpreter
-            # placeholder and a script path that is not a flag.
+            # attribute confidently: the interpreter placeholder followed by a
+            # script path that is not a flag. Extra arguments after that script
+            # path are still a direct invocation.
             is_direct = (
-                len(argv) == 2 and argv[0] == "@python"
+                len(argv) >= 2 and argv[0] == "@python"
                 and not argv[1].startswith("-")
             )
             if script_path is not None and is_direct:
