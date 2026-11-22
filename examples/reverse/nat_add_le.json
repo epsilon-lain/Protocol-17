@@ -1,0 +1,10 @@
+{
+  "statement": "设 a、b、c、d 为自然数。若 a ≤ b 且 c ≤ d，则 a + c ≤ b + d。",
+  "hypotheses": ["hab 给出 a ≤ b。", "hcd 给出 c ≤ d。"],
+  "steps": [
+    {"lines": [5], "explanation": "将 c 加到 hab 的两边。Nat.add_le_add_right 给出 a + c ≤ b + c。"},
+    {"lines": [6], "explanation": "用 omega 解决中间目标 b + c ≤ b + d。"},
+    {"lines": [7], "explanation": "用 Nat.le_trans 连接前两步的不等式，得到 a + c ≤ b + d。"}
+  ],
+  "unresolved": ["第 6 行的源码给出了 omega 的目标。此例未展开该 tactic 生成的证明项。"]
+}
