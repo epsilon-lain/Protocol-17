@@ -117,6 +117,36 @@ Protocol 17 is **not**:
 Read source code and produce an English + mathematical notation description
 of its behaviour. Core principle: **free representation, fixed semantics**.
 
+#### Lean 4 reverse translation and PDF
+
+The Lean entry point applies the same principle to a single theorem. Gemini 4
+Hydrogen returns the statement, assumptions, proof steps, and unresolved details.
+Each step cites a source line, and the export includes the quoted lines and a
+SHA-256 of the input. A model explanation still needs mathematical review.
+
+Use Python 3.10+ and a `GEMINI_API_KEY` from a Google AI Studio Free Tier project.
+Markdown uses only Python's standard library. For PDF, install Pandoc, WeasyPrint
+and the Noto Sans CJK SC and DejaVu fonts. On Debian/Ubuntu, install the system
+dependencies with `sudo apt install pandoc libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk fonts-dejavu-core`,
+then run `python -m pip install 'weasyprint>=65,<70'` in the active virtual environment.
+
+```bash
+python src/lean_reverse.py examples/reverse/nat_add_le.lean --lines 3:7 \
+  --markdown proof.md --pdf proof.pdf
+```
+
+`--lines FIRST:LAST` keeps the line numbers from the full input file. Use
+`--trace proof-states.txt` to supply saved Lean goal states, and `--source-url`
+to link to a public commit or release. The script reads the source as text.
+For separate Lean validation, run `lean examples/reverse/nat_add_le.lean`.
+
+To exercise the exporter offline with a hand-written reference translation:
+
+```bash
+python src/lean_reverse.py examples/reverse/nat_add_le.lean --lines 3:7 \
+  --from-json examples/reverse/nat_add_le.json --markdown proof.md --pdf proof.pdf
+```
+
 ---
 
 ## Generated ≠ Verified
